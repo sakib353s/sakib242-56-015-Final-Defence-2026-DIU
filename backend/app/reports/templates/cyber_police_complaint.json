@@ -1,0 +1,12 @@
+{
+  "agency": "Cyber Crime Investigation Division, Bangladesh Police",
+  "address": "RAB Bhaban (Cyber Crime Wing), Dhaka Metropolitan, Bangladesh — National Reporting: 1961/09612-113497",
+  "reference": "Complaint under Cyber Safety Ordinance 2025 & ICT Act 2006",
+  "subject": "Formal complaint of cyber incident — {case_type}",
+  "citations": {
+    "fraud": ["Cyber Safety Ordinance 2025 — electronic fraud offences", "ICT Act 2006 (as amended) s.55, s.57"],
+    "harassment": ["Cyber Safety Ordinance 2025 — online harassment provisions", "ICT Act 2006 (as amended) s.57"],
+    "leak": ["Cyber Safety Ordinance 2025 — data disclosure offences", "ICT Act 2006 (as amended) s.70"],
+    "other": ["Cyber Safety Ordinance 2025", "ICT Act 2006 (as amended)"]
+  }
+}

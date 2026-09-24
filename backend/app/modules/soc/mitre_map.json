@@ -1,0 +1,10 @@
+{
+  "T1110": ["brute force", "banner", "authentication", "ssh", "ftp", "pop3", "imap", "smtp", "telnet"],
+  "T1190": ["web-shell", "sqli", "sql injection", "rce", "exploit", "wordpress", "phpmyadmin", "joomla", "xss"],
+  "T1498": ["ddos", "flood", "syn", "udp", "icmp", "amplification", "nuclearik"],
+  "T1071": ["c2", "botnet", "cobalt", "beacon", "meterpreter", "shell", "cobaltstrike"],
+  "T1059": ["command", "injection", "powershell", "bash", "curl", "wget"],
+  "T1041": ["exfiltration", "upload", "dns", "tunnel"],
+  "T1486": ["ransomware", "encrypt", "weird", "wannacry"],
+  "T1046": ["scan", "nmap", "zmap", "masscan", "probe", "service detection"]
+}

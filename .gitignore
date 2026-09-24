@@ -1,0 +1,33 @@
+# deps & builds
+node_modules/
+.next/
+.next-build/
+dist/
+.expo/
+web/.expo/
+
+# runtime data — contains live audit chain & secrets
+backend/data/
+mobile/dist/
+
+# local env & secrets
+.env
+.env.local
+*.local
+backend/data/secrets.json
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# vendored third-party tools — regenerate with: python3 backend/vendor/install_tools.py
+backend/vendor/bin/
+backend/vendor/build/
+backend/vendor/sqlmap/
+
+# misc
+.DS_Store
+*.log
+npm-debug.*

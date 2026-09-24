@@ -1,0 +1,12 @@
+{
+  "agency": "Bangladesh Telecommunication Regulatory Commission (BTRC)",
+  "address": "BTRC Headquarters, House 9/A, Road 2, Block K, Banani, Dhaka 1213",
+  "reference": "Complaint under Cyber Safety Ordinance 2025 & ICT Act 2006",
+  "subject": "Formal complaint of cyber incident — {case_type}",
+  "citations": {
+    "fraud": ["Cyber Safety Ordinance 2025 — provisions on electronic fraud & impersonation", "ICT Act 2006 (as amended) s.57 — fraudulent use of electronic devices"],
+    "harassment": ["Cyber Safety Ordinance 2025 — provisions on cyberstalking/harassment", "ICT Act 2006 (as amended) s.57 — obscuring/defamation via digital media"],
+    "leak": ["Cyber Safety Ordinance 2025 — unlawful disclosure of personal data", "ICT Act 2006 (as amended) s.70 — breach of confidentiality by trusted person"],
+    "other": ["Cyber Safety Ordinance 2025", "ICT Act 2006 (as amended)"]
+  }
+}

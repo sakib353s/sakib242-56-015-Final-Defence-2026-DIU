@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "CYBERWATCH-BD",
+    "slug": "cyberwatch-bd",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "cyberwatch",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0B0F14",
+    "jsEngine": "hermes",
+    "assetBundlePatterns": ["**/*"],
+    "extra": {
+      "apiBase": "http://10.0.2.2:8471",
+      "apiBaseProd": "https://api.cyberwatch.railway.app",
+      "certPins": [
+        "REPLACE_WITH_SPKI_SHA256_PIN_1",
+        "REPLACE_WITH_SPKI_SHA256_PIN_2"
+      ]
+    },
+    "android": {
+      "package": "app.bd.cyberwatch",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#0B0F14"
+      },
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.VIBRATE"
+      ],
+      "blockedPermissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": false
+        }
+      ]
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "id": "cwb-policy-rulepack",
+  "version": "5.0.0",
+  "jurisdiction": "Bangladesh",
+  "instruments": {
+    "CSO-2025": "Bangladesh Cyber Safety Ordinance 2025",
+    "ICT-2006": "Information and Communication Technology Act 2006 (as amended)"
+  },
+  "principles": [
+    "authorization-first: every offensive capability requires a written-authorization warrant record",
+    "osint-public-only: intelligence gathering limited to publicly available artifacts",
+    "official-channels-only: victim complaints route exclusively to BTRC and Cyber Police",
+    "fail-closed: any gate failure aborts the operation; no silent degradation",
+    "audit-everything: every mutating action appends to the HMAC hash-chained audit log",
+    "no-auto-filing: generated complaints are drafts requiring human review",
+    "data-minimization: no raw PII in audit payloads, hashes only"
+  ],
+  "out_of_scope": [
+    "unauthorized third-party access",
+    "data destruction routines",
+    "account takeover flows",
+    "law evasion (BD or international)"
+  ]
+}
