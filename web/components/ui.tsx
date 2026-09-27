@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { ApiProblem } from "@/lib/api";
+import { toProblem } from "@/lib/api";
 import { getToken } from "@/lib/auth";
 import { getRole } from "@/lib/auth";
 import { hasRole, ROLE_TAG } from "@/lib/rbac";
@@ -175,13 +175,15 @@ export function EmptyRows({ what = "No records to display" }: { what?: string })
 }
 
 export function ErrBanner({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
-  const p = error instanceof ApiProblem ? error : new ApiProblem({ title: "Request failed", detail: String(error) });
+  // Normalise every shape (ApiProblem, transport Error, plain string, foreign
+  // bundle) so the banner never collapses into "Request failed · about:blank".
+  const p = toProblem(error);
   return (
     <div className="problem" role="alert">
       <div className="pt">
         {p.title} · HTTP {p.status || "—"} · {p.type}
       </div>
-      <div className="pd">{p.detail}</div>
+      <div className="pd">{p.detail || p.title}</div>
       <div className="pm">
         audit_ref={p.audit_ref ?? "—"} · request_id={p.request_id ?? "—"}
         {onRetry ? (

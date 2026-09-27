@@ -1,56 +1,42 @@
 export type ThemePref = "dark" | "light" | "system";
 export type Theme = "dark" | "light";
 
-const KEY = "cwb-theme-pref";
+/* v7 — the console ships ONE light theme. The dark/system vocabulary stays
+   in the types so old stored values and component APIs don't break, but
+   every resolver below always returns light. */
 
 export function getPref(): ThemePref {
-  if (typeof window === "undefined") return "dark";
-  const v = window.localStorage.getItem(KEY);
-  return v === "light" || v === "system" ? v : "dark";
+  return "light";
 }
 
-export function resolve(pref: ThemePref): Theme {
-  if (pref !== "system") return pref;
-  return typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: light)").matches
-    ? "light"
-    : "dark";
+export function resolve(_pref: ThemePref): Theme {
+  return "light";
 }
 
 export function current(): Theme {
-  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+  return "light";
 }
 
 export const THEME_EVENT = "cwb-theme";
 
-export function apply(pref: ThemePref): Theme {
-  const t = resolve(pref);
-  document.documentElement.dataset.theme = t;
+export function apply(_pref: ThemePref): Theme {
+  document.documentElement.dataset.theme = "light";
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", t === "light" ? "#eaeef4" : "#070a12");
-  window.dispatchEvent(new CustomEvent(THEME_EVENT, { detail: t }));
-  return t;
+  if (meta) meta.setAttribute("content", "#f5f7fb");
+  window.dispatchEvent(new CustomEvent(THEME_EVENT, { detail: "light" as Theme }));
+  return "light";
 }
 
-export function setPref(pref: ThemePref): Theme {
-  try {
-    window.localStorage.setItem(KEY, pref);
-  } catch {
-    /* private mode — apply still works for the session */
-  }
-  return apply(pref);
+export function setPref(_pref: ThemePref): Theme {
+  return apply("light");
 }
 
-/** live-follow OS appearance while pref === system */
+/** no-op: appearance no longer follows the OS */
 export function watchSystem(): () => void {
-  const mq = window.matchMedia("(prefers-color-scheme: light)");
-  const on = () => {
-    if (getPref() === "system") apply("system");
-  };
-  mq.addEventListener("change", on);
-  return () => mq.removeEventListener("change", on);
+  return () => {};
 }
 
 /** run once per page load (client) */
 export function initTheme(): Theme {
-  return apply(getPref());
+  return apply("light");
 }

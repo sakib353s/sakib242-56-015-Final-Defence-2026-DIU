@@ -11,7 +11,6 @@ frontend reads actual stage state from the backend.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 
 from app.audit import chain
@@ -283,6 +282,20 @@ async def _run(assessment_id: str, user_id: str) -> None:
                   (risk, risk_ver, assessment_id))
     await _set_stage(assessment_id, 6, "completed", f"{len(decisions)} decisions")
 
+    # Stage 6.5: Threat intelligence correlation (advisory context only —
+    # TI content never authorizes, executes, or alters policy)
+    try:
+        from app.modules.threatintel import service as ti_service
+        ti_summary = ti_service.correlate_assessment(assessment_id, user_id, target,
+                                                     resolved_ips, candidates)
+        if ti_summary["matches"]:
+            await manager.publish("alerts", "ti.match", {
+                "assessment": assessment_id, "target": target,
+                "count": ti_summary["matches"]})
+    except Exception as e:
+        chain.safe_append(user_id, "ti.correlate_failed", assessment_id,
+                          {"error": str(e)[:200]})
+
     # Stage 7: Finalize
     await _set_stage(assessment_id, 7, "running")
     await job_progress(jid, 0.97, "finalizing")
@@ -339,3 +352,6 @@ def get_finding(finding_id: str) -> dict | None:
         "SELECT * FROM brain_decisions WHERE finding_id=? ORDER BY created_at DESC LIMIT 1",
         finding_id)
     return {"finding": f, "evidence": evidence, "decision": decisions[0] if decisions else None}
+
+
+get_finding_detail = get_finding

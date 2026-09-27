@@ -120,10 +120,36 @@ def warrant_window_active(w: dict) -> bool:
         return False
 
 
+def lab_anchor_warrant(kind: str, actor_id: str) -> dict:
+    """Synthetic ledger row used when the lab skips the warrant gate: keeps the
+    schema's FKs, heartbeat joins and the expiry watchdog working unchanged.
+    Revoking it stops lab-skip circuits too — that is the kill switch."""
+    ref = f"LAB-SKIP-{kind}"
+    for w in Ledger.all_():
+        if w["warrant_ref"] == ref and w["kind"] == kind:
+            return w
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    return Ledger.create(kind, ["0.0.0.0/0", "::/0"],
+                         "Lab-mode synthetic anchor — warrant gate relaxed (CWB_WARRANT_ENFORCE)",
+                         ref, actor_id, "lab",
+                         now.isoformat(), (now + timedelta(days=89)).isoformat())
+
+
 def warrant_gate(request: Request, p: Principal, warrant_id: str, kind: str, target: str):
     """Server-side written-authorization gate. Missing/expired/revoked/out-of-scope
-    => 403 + audit row. Returns the warrant row on success."""
+    => 403 + audit row. Returns the warrant row on success.
+
+    Lab (CWB_WARRANT_ENFORCE=auto/off) skips the gate auditedly and returns the
+    warrant if one is supplied, else a skip marker; production never enters
+    that branch (see Settings.warrant_required)."""
     w = Ledger.get(warrant_id) if warrant_id else None
+    if not S.warrant_required:
+        if w and not w["revoked_at"] and warrant_window_active(w):
+            return w
+        chain.safe_append(p.user_id, "gate.warrant_lab_skip", target, {"kind": kind})
+        return lab_anchor_warrant(kind, p.user_id)
     if not w:
         chain.safe_append(p.user_id, "gate.warrant_missing", target, {"kind": kind})
         raise WarrantMissing(f"No warrant record {warrant_id or '(blank)'} in auth_ledger")

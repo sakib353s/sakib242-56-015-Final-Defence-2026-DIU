@@ -24,17 +24,14 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#eef2f5" },
-    { media: "(prefers-color-scheme: dark)", color: "#0b0f14" },
-  ],
+  themeColor: [{ media: "(prefers-color-scheme: light)", color: "#f5f7fb" }],
 };
 
-const themeInitScript = `(function(){try{var k="cwb-theme-pref";var p=localStorage.getItem(k);if(p!=="light"&&p!=="system")p="dark";var t=p==="system"?(matchMedia("(prefers-color-scheme: light)").matches?"light":"dark"):p;document.documentElement.setAttribute("data-theme",t);}catch(e){document.documentElement.setAttribute("data-theme","dark");}})();`;
+const themeInitScript = `(function(){document.documentElement.setAttribute("data-theme","light");})();`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${inter.variable} ${jetbrains.variable}`} data-theme="dark" suppressHydrationWarning>
+    <html lang="en" className={`${inter.variable} ${jetbrains.variable}`} data-theme="light" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>

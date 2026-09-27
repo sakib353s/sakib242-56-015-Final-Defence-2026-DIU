@@ -2,9 +2,16 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { get } from "@/lib/api";
 import { getToken, login } from "@/lib/auth";
 import { ErrBanner, Field } from "@/components/ui";
 import { ThemeToggle } from "@/components/theme";
+
+const QUICK_ACCOUNTS = [
+  { role: "1", username: "admin", password: "admin123", label: "Administrator" },
+  { role: "2", username: "analyst", password: "analyst123", label: "Analyst" },
+  { role: "3", username: "observer", password: "observer123", label: "Observer" },
+];
 
 export default function LoginPage() {
   const router = useRouter();
@@ -13,25 +20,46 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const [isLab, setIsLab] = useState(false);
 
   useEffect(() => {
     if (getToken()) router.replace("/dashboard");
+    get<{ env: string }>("/config")
+      .then((c) => setIsLab(c.env !== "production"))
+      .catch(() => setIsLab(false));
   }, [router]);
 
-  const submit = useCallback(
-    async (e: FormEvent) => {
-      e.preventDefault();
+  const signIn = useCallback(
+    async (u: string, p: string) => {
       setErr(null);
       setBusy(true);
       try {
-        await login({ username: username.trim().toLowerCase(), password });
+        await login({ username: u.trim().toLowerCase(), password: p });
         router.replace("/dashboard");
       } catch (ex) {
         setErr(ex);
         setBusy(false);
       }
     },
-    [username, password, router],
+    [router],
+  );
+
+  const submit = useCallback(
+    (e: FormEvent) => {
+      e.preventDefault();
+      void signIn(username, password);
+    },
+    [signIn, username, password],
+  );
+
+  const quick = useCallback(
+    (u: string, p: string, role: string) => {
+      setUsername(u);
+      setPassword(p);
+      setRoleHint(role);
+      void signIn(u, p);
+    },
+    [signIn],
   );
 
   return (
@@ -93,6 +121,25 @@ export default function LoginPage() {
           >
             {busy ? "Signing in…" : "Sign in"}
           </button>
+          {isLab ? (
+            <div style={{ marginTop: 14 }}>
+              <div className="gate-title" style={{ marginBottom: 6 }}>Quick login (lab)</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {QUICK_ACCOUNTS.map((a) => (
+                  <button
+                    key={a.username}
+                    type="button"
+                    className="btn small"
+                    disabled={busy}
+                    onClick={() => quick(a.username, a.password, a.role)}
+                    title={`${a.username} / ${a.password}`}
+                  >
+                    {a.label} · {a.username}/{a.password}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div className="gate-hint">
             Every action is recorded in the audit log. Privileged and security-testing actions
             require an additional verification code.

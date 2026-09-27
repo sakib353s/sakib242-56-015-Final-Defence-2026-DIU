@@ -219,10 +219,9 @@ async def http_analyze(url: str) -> dict:
                         "entity_value": key, "confidence": 0.8,
                         "payload": {"header": hdr, "severity": sev, "description": desc},
                     })
-        if any(t in lowered.get("server", "").lower() for t in ("apache/2.", "nginx/1.", "iis/")):
-            pass
         return {"observations": obs, "evidence": ev, "status": status,
-                "final_url": str(r.url), "engine_version": ENGINE_VERSION}
+                "headers": lowered, "final_url": str(r.url),
+                "engine_version": ENGINE_VERSION}
     except httpx.HTTPError as e:
         return {"observations": [], "evidence": [],
                 "error": f"http_unreachable: {str(e)[:160]}",

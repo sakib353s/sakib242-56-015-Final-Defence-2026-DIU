@@ -360,6 +360,23 @@ export interface Circuit {
   last_heartbeat: string | null;
 }
 
+export interface TraceHop {
+  ttl: number;
+  ip: string;
+  hostname: string | null;
+  avg_ms: string | null;
+  worst_ms: string | null;
+  loss_pct: string | null;
+  nat: unknown;
+}
+
+export interface TraceResult {
+  target: { ip: string; hostname: string };
+  started: string;
+  engine: string;
+  hops: TraceHop[];
+}
+
 export interface HwAsset {
   id: string;
   name: string;
@@ -448,41 +465,44 @@ export interface Assessment {
   created_by: string;
   bound_session: string;
   job_id: string | null;
+  worker_id: string | null;
+  policy_version: string | null;
+  report_path: string | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
-  updated_at: string;
-  error_message: string | null;
+  aborted_reason: string | null;
 }
 
 export interface AssessmentStage {
   id: string;
   assessment_id: string;
   seq: number;
-  key: string;
+  stage_key: string;
   label: string;
-  status: "PENDING" | "RUNNING" | "DONE" | "DEGRADED" | "SKIPPED" | "FAILED";
-  detail: string | null;
+  status: "pending" | "running" | "completed" | "failed" | "skipped" | "degraded" | "unknown";
+  message: string | null;
   engine: string | null;
   engine_version: string | null;
   started_at: string | null;
   finished_at: string | null;
-  observation_count: number;
 }
 
 export interface Observation {
   id: string;
   assessment_id: string;
-  stage_key: string;
   kind: string;
   entity_type: string;
   entity_value: string;
+  target: string;
   confidence: number;
-  source: string;
-  provenance_json: string;
-  data_json: string;
-  evidence_refs_json: string;
-  created_at: string;
+  source_engine: string;
+  source_version: string | null;
+  provenance: string;
+  payload_json: string;
+  evidence_ids_json: string;
+  state: "observed" | "inferred" | "correlated" | "declared";
+  collected_at: string;
 }
 
 export type FindingLifecycle =
@@ -533,41 +553,138 @@ export interface AssessmentFinding {
   updated_at: string;
 }
 
-export interface Evidence {
+export interface FindingQueueRow {
   id: string;
   assessment_id: string;
+  title: string;
+  severity: "critical" | "high" | "medium" | "low" | "informational";
+  confidence: number;
+  lifecycle: FindingLifecycle;
+  host: string | null;
+  endpoint: string | null;
+  source_engine: string;
+  updated_at: string;
+}
+
+export interface Evidence {
+  id: string;
+  assessment_id: string | null;
   finding_id: string | null;
   observation_id: string | null;
   kind: string;
-  summary: string;
-  content_sha256: string;
-  redacted_content: string | null;
-  metadata_json: string;
-  source_engine: string;
-  source_version: string;
-  collected_at: string;
+  ref: string;
+  sha256: string | null;
+  size: number | null;
+  mime: string | null;
+  storage_path: string | null;
+  redacted: number;
+  description: string | null;
+  produced_by: string;
+  produced_version: string | null;
+  captured_at: string;
 }
 
 export interface BrainDecision {
   id: string;
   assessment_id: string | null;
   finding_id: string | null;
-  decision_type: string;
-  risk: number;
-  security_confidence: number;
-  model_confidence: number;
-  autonomy_level: "information_only" | "recommendation" | "preparation" | "approval_request" | "approved_automation" | "bounded_autonomous";
-  rationale: string;
+  alert_id: string | null;
+  incident_id: string | null;
+  autonomy_level: "information_only" | "recommendation" | "preparation" | "approval_request" | "approved_automation" | "bounded_autonomous_defense";
+  classification: string | null;
+  risk: number | null;
+  security_confidence: number | null;
+  model_confidence: number | null;
+  rationale_json: string;
   evidence_refs_json: string;
   missing_evidence_json: string;
   recommendations_json: string;
   selected_action: string | null;
-  policy_result: string;
-  authorization_result: string;
+  policy_result: string | null;
+  authorization_result: string | null;
   verification_state: string;
-  model_runtime: string;
-  rule_pack_version: string;
+  model_runtime: string | null;
+  rule_pack_version: string | null;
   created_at: string;
+}
+
+export type TiStixType =
+  | "indicator" | "malware" | "threat-actor" | "campaign" | "tool" | "attack-pattern"
+  | "infrastructure" | "vulnerability" | "report" | "observed-data" | "intrusion-set"
+  | "course-of-action" | "identity";
+
+export interface TiObject {
+  id: string;
+  stix_type: TiStixType;
+  stix_id: string | null;
+  name: string;
+  description: string | null;
+  pattern: string | null;
+  pattern_type: string | null;
+  valid_from: string | null;
+  valid_until: string | null;
+  confidence: number | null;
+  tlp: "CLEAR" | "GREEN" | "AMBER" | "RED" | null;
+  labels_json: string;
+  kill_chain_json: string;
+  external_refs_json: string;
+  source: string;
+  trust: "internal" | "untrusted";
+  provenance_json: string;
+  first_seen: string | null;
+  last_seen: string | null;
+  revoked: number;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TiRelationship {
+  id: string;
+  source_id: string;
+  source_kind: string;
+  source_type: string | null;
+  source_name: string | null;
+  relationship_type: string;
+  target_id: string;
+  target_kind: string;
+  target_type: string | null;
+  target_name: string | null;
+  description: string | null;
+  confidence: number;
+  state: "declared" | "observed" | "inferred" | "correlated";
+  created_by: string;
+  created_at: string;
+}
+
+export interface TiObservable {
+  observable_type: "ipv4" | "ipv6" | "domain" | "url" | "hash" | "email";
+  value: string;
+  first_seen: string | null;
+  last_seen: string | null;
+}
+
+export interface TiObjectDetail {
+  object: TiObject;
+  relationships: TiRelationship[];
+  observables: TiObservable[];
+  decisions: { id: string; finding_id: string | null; rationale_json: string; recommendations_json: string; created_at: string }[];
+}
+
+export interface TiMatchResult {
+  value: string;
+  normalized: string | null;
+  type: string | null;
+  matches: (TiObject & { matched_type?: string; matched_value?: string })[];
+}
+
+export interface TiStats {
+  by_type: { stix_type: string; n: number }[];
+  total: number;
+  untrusted: number;
+  last_ingest: string | null;
+  links: number;
+  note: string;
 }
 
 export interface AssessmentDetail {

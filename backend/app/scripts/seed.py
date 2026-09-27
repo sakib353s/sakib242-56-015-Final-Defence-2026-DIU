@@ -42,7 +42,7 @@ def main():
     chain.append("system:seed", "user.bootstrap", uid, {"username": "admin", "role": "SUPER_ADMIN"})
     print("=" * 64)
     print("  CYBERWATCH-BD initial SUPER_ADMIN (one-time display — store now)")
-    print(f"  username : admin")
+    print("  username : admin")
     print(f"  password : {password}")
     print(f"  totp b32 : {secret}")
     print(f"  otpauth  : {pyotp.TOTP(secret).provisioning_uri('admin', issuer_name='CYBERWATCH-BD')}")

@@ -3,7 +3,6 @@
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
-from app.core.ids import new_id
 from app.db import sqlite as sql
 from app.gateway.deps import Principal, require_analyst, require_totp_stepup
 from app.modules.ipanon import service
@@ -32,3 +31,16 @@ async def status(p: Principal = Depends(require_analyst)):
     rows = sql.all_("SELECT id, status, masked_ip, started_at, last_heartbeat FROM circuits"
                     " ORDER BY started_at DESC LIMIT 20")
     return {"circuits": rows}
+
+
+@router.get("/trace")
+async def trace(request: Request, target: str, cycles: int = 2,
+                p: Principal = Depends(require_analyst)):
+    """Network-path trace from this gateway to `target` (Trippy, unprivileged).
+    Measures the real Internet route — it does NOT anonymize; source IP stays
+    visible to every hop. Audited; no circuit, no warrant (not offensive)."""
+    from app.audit import chain
+    res = await service.trace_path(target, cycles)
+    chain.safe_append(p.user_id, "ipanon.trace", None,
+                      {"target": target, "cycles": cycles, "hops": len(res["hops"])})
+    return res

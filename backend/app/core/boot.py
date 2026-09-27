@@ -9,17 +9,16 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import httpx
-import os
 import platform
 import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.audit import chain
 from app.core.config import get_settings
-from app.core.ids import new_id, new_token
-from app.core.security import (canonical_json, make_access, totp_now, totp_valid,
+from app.core.ids import new_id
+from app.core.security import (make_access, totp_now, totp_valid,
                                decode_access, now_iso as _now_iso)
 from app.db import sqlite as sql
 from app.modules import handshakes

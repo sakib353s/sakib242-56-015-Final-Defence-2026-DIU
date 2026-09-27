@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.audit import chain, verifier
 from app.audit.router import router as audit_router
@@ -47,6 +47,9 @@ from app.modules.victim.router import router as victim_router
 from app.modules.vuln.router import router as vuln_router
 from app.modules.assessment.router import router as assessment_router
 from app.modules.findings.router import router as findings_router
+from app.modules.threatintel.router import router as ti_router
+from app.modules.fim.router import router as fim_router
+from app.modules.fim import scanner as fim_scanner
 from app.reports.router import router as reports_router
 
 S = get_settings()
@@ -88,6 +91,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(soc_service.block_expiry_watchdog()),
         asyncio.create_task(_ipanon_heartbeat_loop()),
         asyncio.create_task(system_service.sampler_loop()),
+        asyncio.create_task(fim_scanner.scanner_loop()),
     ]
     log.info("cwb-core %s online (env=%s)", S.version, S.env)
     yield
@@ -131,7 +135,8 @@ async def health():
 
 @api.get("/config")
 async def public_config():
-    return {"env": S.env, "version": S.version, "totp_stepup_required": S.totp_stepup_required}
+    return {"env": S.env, "version": S.version, "totp_stepup_required": S.totp_stepup_required,
+            "warrant_required": S.warrant_required}
 
 
 @api.get("/settings/policy")
@@ -158,6 +163,61 @@ async def modules_health(p: Principal = Depends(require_analyst)):
     return {"modules": out}
 
 
+_ROOT_HTML = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CYBERWATCH-BD cwb-core</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+         background: #0a0d12; color: #e6edf3;
+         font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { width: min(560px, calc(100vw - 32px)); background: #12171f;
+         border: 1px solid #262d38; border-radius: 8px; padding: 28px;
+         box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5); }
+  h1 { margin: 0 0 4px; font-size: 20px; letter-spacing: 0.3px; }
+  h1 .v { color: #4c8dff; }
+  .sub { color: #8b949e; margin: 0 0 20px; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+  .chip { display: inline-block; padding: 3px 10px; border-radius: 999px;
+          font-size: 12px; border: 1px solid #262d38; background: #0f141b; color: #9da7b3; }
+  .chip.ok { color: #3fb950; border-color: rgba(63, 185, 80, 0.4); }
+  .chip.lab { color: #d29922; border-color: rgba(210, 153, 34, 0.4); }
+  a.list { display: block; padding: 12px 14px; margin-bottom: 8px; text-decoration: none;
+           color: #e6edf3; background: #0f141b; border: 1px solid #262d38; border-radius: 6px;
+           transition: border-color 120ms ease, background 120ms ease; }
+  a.list:hover { border-color: #4c8dff; background: rgba(76, 141, 255, 0.08); }
+  a.list b { color: #4c8dff; font-weight: 600; }
+  a.list span { display: block; color: #7d8896; font-size: 12px; }
+  .mono { font-family: ui-monospace, "SFMono", SFMono-Regular, Menlo, Consolas, monospace; }
+  footer { margin-top: 16px; color: #7d8896; font-size: 12px; }
+</style></head>
+<body><main>
+  <h1>CYBERWATCH-BD <span class="v">cwb-core __VERSION__</span></h1>
+  <p class="sub">API backend. This origin serves JSON under <span class="mono">/api/v1</span> — the web console is a separate app.</p>
+  <div class="chips">
+    <span class="chip ok">online</span>
+    <span class="chip lab">env: __ENV__</span>
+    <span class="chip">v__VERSION__</span>
+  </div>
+  <a class="list" href="http://127.0.0.1:3000"><b>Web console</b><span>http://127.0.0.1:3000 — the operator UI</span></a>
+  <a class="list" href="/docs"><b>API docs</b><span class="mono">/docs — interactive OpenAPI reference</span></a>
+  <a class="list" href="/api/v1/health"><b>Health</b><span class="mono">/api/v1/health — liveness, policy hash, ASGI state</span></a>
+  <footer>CSO-2025 + ICT-2006 compliance enforced fail-closed.</footer>
+</main></body></html>"""
+
+
+@app.get("/", include_in_schema=False)
+async def root(request: Request):
+    info = {"name": "CYBERWATCH-BD cwb-core", "version": S.version, "env": S.env,
+            "api": "/api/v1", "health": "/api/v1/health", "docs": "/docs",
+            "console": "http://127.0.0.1:3000"}
+    if "text/html" in request.headers.get("accept", ""):
+        html = _ROOT_HTML.replace("__VERSION__", S.version).replace("__ENV__", S.env)
+        return HTMLResponse(html)
+    return info
+
+
 app.include_router(boot_router)
 app.include_router(auth_router)
 app.include_router(ledger_router)
@@ -167,6 +227,8 @@ app.include_router(pentest_router)
 app.include_router(vuln_router)
 app.include_router(assessment_router)
 app.include_router(findings_router)
+app.include_router(ti_router)
+app.include_router(fim_router)
 app.include_router(soc_router)
 app.include_router(remediation_router)
 app.include_router(osint_router)

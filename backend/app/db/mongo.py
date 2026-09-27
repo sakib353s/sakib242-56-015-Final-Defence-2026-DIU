@@ -3,7 +3,7 @@ In lab mode events route to the SQLite `event_log` fallback, attested loudly at 
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from pymongo import MongoClient
 from pymongo.errors import PyMongoError

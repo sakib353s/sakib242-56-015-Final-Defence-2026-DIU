@@ -27,7 +27,32 @@ export class ApiProblem extends Error implements ProblemData {
 
 export function toProblem(e: unknown): ApiProblem {
   if (e instanceof ApiProblem) return e;
-  return new ApiProblem({ title: "Transport failure", detail: e instanceof Error ? e.message : String(e) });
+  // A foreign error can still carry the RFC 7807 fields (e.g. one produced by a
+  // different bundle instance of ApiProblem). Preserve whatever is structured
+  // instead of flattening it into an opaque string.
+  const p = (e ?? {}) as Partial<ProblemData>;
+  const isError = e instanceof Error;
+  const title = p.title ?? (isError ? "Transport failure" : "Request failed");
+  return new ApiProblem({
+    type: p.type,
+    title,
+    status: p.status,
+    detail: p.detail ?? (isError ? e.message : String(e)),
+    audit_ref: p.audit_ref ?? null,
+    request_id: p.request_id ?? null,
+  });
+}
+
+/** Human-readable default title for a bare HTTP status (no problem body present). */
+function httpTitle(status: number): string {
+  if (status === 401) return "Authentication required";
+  if (status === 403) return "Authorization denied";
+  if (status === 404) return "Resource not found";
+  if (status === 409) return "Resource state conflict";
+  if (status === 422) return "Request rejected";
+  if (status === 429) return "Rate limit exceeded";
+  if (status >= 500) return "Server error";
+  return `HTTP ${status}`;
 }
 
 export function qs(params: Record<string, string | number | boolean | null | undefined>): string {
@@ -46,6 +71,59 @@ export interface ApiInit {
   totp?: string;
   headers?: Record<string, string>;
   signal?: AbortSignal;
+  /** set internally on the single retry after a silent refresh */
+  _retried?: boolean;
+}
+
+/* ---- silent refresh ----
+   Access tokens live 15 minutes; the server issues a 7-day rotating refresh
+   cookie. Refreshes MUST be serialized: the cookie rotates on every call, so
+   two parallel refreshes would invalidate each other and log the user out. */
+let refreshing: Promise<boolean> | null = null;
+
+export async function tryRefresh(): Promise<boolean> {
+  if (!refreshing) {
+    refreshing = (async () => {
+      try {
+        const call = () => fetch(`${API_BASE}/auth/refresh`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { accept: "application/json" },
+        });
+        let res = await call();
+        // dev-proxy keep-alive race: request never reached the backend
+        // (no X-Request-ID, non-JSON body) — one retry on a fresh socket is safe.
+        if (
+          res.status >= 500 &&
+          !res.headers.get("x-request-id") &&
+          !(res.headers.get("content-type") || "").includes("json")
+        ) {
+          res = await call();
+        }
+        if (!res.ok) return false;
+        const data = (await res.json()) as { access_token?: string };
+        if (!data.access_token) return false;
+        const { getSession, setTokenOnly } = await import("./auth");
+        if (!getSession()) return false; // no session shape to patch
+        setTokenOnly(data.access_token);
+        return true;
+      } catch {
+        return false;
+      }
+    })().finally(() => {
+      refreshing = null;
+    });
+  }
+  return refreshing;
+}
+
+/** proactive top-up on app load: refresh quietly when the token is near its edge */
+export async function maybeRefresh(): Promise<void> {
+  const { getSession } = await import("./auth");
+  const s = getSession();
+  if (!s) return;
+  if (Date.now() - s.since < 12 * 60 * 1000) return;
+  await tryRefresh();
 }
 
 export async function apiFetch<T>(path: string, init: ApiInit = {}): Promise<T> {
@@ -63,8 +141,31 @@ export async function apiFetch<T>(path: string, init: ApiInit = {}): Promise<T> 
     credentials: "same-origin",
   });
 
-  if (res.status === 401 && !path.startsWith("/auth/login") && !path.startsWith("/boot/")) {
+  /* Proxy-race recovery: the dev rewrite proxy can reuse a keep-alive socket the
+     backend already closed, answering "500 Internal Server Error" (plain text)
+     without the request ever arriving. A real backend response always carries
+     X-Request-ID and JSON. If both are missing, retry once on a fresh socket. */
+  if (
+    res.status >= 500 &&
+    !init._retried &&
+    !res.headers.get("x-request-id") &&
+    !(res.headers.get("content-type") || "").includes("json")
+  ) {
+    return apiFetch<T>(path, { ...init, _retried: true });
+  }
+
+  if (
+    res.status === 401 &&
+    !init._retried &&
+    !path.startsWith("/auth/login") &&
+    !path.startsWith("/auth/refresh") &&
+    !path.startsWith("/auth/logout") &&
+    !path.startsWith("/boot/")
+  ) {
     if (typeof window !== "undefined") {
+      if (await tryRefresh()) {
+        return apiFetch<T>(path, { ...init, _retried: true });
+      }
       const { clearSession } = await import("./auth");
       clearSession();
       if (!window.location.pathname.startsWith("/boot")) window.location.replace("/boot");
@@ -82,8 +183,17 @@ export async function apiFetch<T>(path: string, init: ApiInit = {}): Promise<T> 
   }
   if (!res.ok) {
     const p = (data ?? {}) as ProblemData;
+    // Normalise: never let a partial body (or a body carrying only `detail`)
+    // degrade into the generic "Request failed / about:blank / HTTP —" banner.
     throw new ApiProblem(
-      p.type || p.title || p.detail ? p : { title: `HTTP ${res.status}`, detail: text.slice(0, 300) || undefined },
+      {
+        type: p.type,
+        title: p.title ?? httpTitle(res.status),
+        status: p.status ?? res.status,
+        detail: p.detail ?? (text.slice(0, 300) || ""),
+        audit_ref: p.audit_ref ?? null,
+        request_id: p.request_id ?? res.headers.get("x-request-id") ?? null,
+      },
       res.status,
     );
   }

@@ -7,7 +7,7 @@ writes a chained audit entry containing only a SHA-256 fingerprint of the token.
 import hashlib
 import json
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from app.audit import chain

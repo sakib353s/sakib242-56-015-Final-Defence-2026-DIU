@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
 
 import paramiko
 
@@ -19,6 +18,26 @@ from app.db import sqlite as sql
 
 S = get_settings()
 ANOMALY_RULES = {"disk_pct": 85, "mem_pct": 90, "load_per_core": 2.0}
+
+# Cross-platform probe (Linux + macOS): df/awk work everywhere; memory and load
+# branch on uname. Temperature is honest best-effort — only reported when the
+# platform actually exposes it without elevated privileges.
+PROBE = r"""PATH="/bin:/usr/bin:/sbin:/usr/sbin:$PATH"; export PATH; \
+echo DISK:$(df -P / | awk 'NR==2{print $5}'); \
+if [ "$(uname)" = Darwin ]; then \
+echo LOAD:$(sysctl -n vm.loadavg | tr -d '()' | awk '{print $2}'); \
+total=$(sysctl -n hw.memsize); \
+ps=$(vm_stat | sed -n 's/.*of \([0-9]*\) bytes.*/\1/p;q'); \
+echo MEM:$(vm_stat | awk -v t="$total" -v p="$ps" '/^Pages active:/{a=$3+0} /^Pages wired down:/{w=$4+0} /^Pages occupied by compressor:/{c=$5+0} END{printf "%.0f%%", (a+w+c)*p*100/t}'); \
+command -v osx-cpu-temp >/dev/null 2>&1 && echo TEMP:$(osx-cpu-temp 2>/dev/null) || true; \
+else \
+echo LOAD:$(cat /proc/loadavg | awk '{print $1}'); \
+echo MEM:$(free | awk '/Mem/{printf "%.0f%%", $3*100/$2}'); \
+tz=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null); \
+[ -n "$tz" ] && echo TEMP:$(awk -v v="$tz" 'BEGIN{printf "%.0f", v/1000}')C || true; \
+fi; \
+echo OS:$(uname -srm); \
+echo UP:$(uptime -p 2>/dev/null || uptime)"""
 
 
 def create_asset(name, kind, host, ssh_port, ssh_user, ssh_password, snmp_community,
@@ -37,6 +56,18 @@ def create_asset(name, kind, host, ssh_port, ssh_user, ssh_password, snmp_commun
     chain.append(actor, "hw.asset.create", aid, {"host": host, "kind": kind})
     return sql.one("SELECT id, name, kind, host, ssh_port, ssh_user, disabled, created_at"
                    " FROM hw_assets WHERE id=?", aid)
+
+
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+async def local_run(command: str) -> str:
+    """Run the fixed probe on the gateway host itself — for monitoring the
+    machine this platform runs on, no SSH credentials are involved."""
+    proc = await asyncio.create_subprocess_shell(
+        command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    out, _ = await proc.communicate()
+    return out.decode(errors="replace")
 
 
 async def ssh_run(host: str, port: int, user: str, password: str, command: str,
@@ -72,14 +103,14 @@ async def check_asset(asset_id: str, actor: str) -> dict:
         raise Forbidden("Asset locked after repeated auth failures — re-enable manually")
     checks: dict = {}
     anomalies: list[str] = []
-    if asset["ssh_user"] and asset["ssh_pass_enc"]:
+    if (asset["host"] or "").lower() in LOCAL_HOSTS and not asset["ssh_user"]:
+        raw = await local_run(PROBE)
+        checks["local"] = dict(kv.split(":", 1) for kv in raw.splitlines() if ":" in kv)
+    elif asset["ssh_user"] and asset["ssh_pass_enc"]:
         try:
             pw = dec_field(asset["ssh_pass_enc"])
             raw = await ssh_run(asset["host"], asset["ssh_port"] or 22, asset["ssh_user"], pw,
-                                "echo DISK:$(df -P / | awk 'NR==2{print $5}');"
-                                "echo MEM:$(free | awk '/Mem/{printf \"%.0f\", $3*100/$2}');"
-                                "echo LOAD:$(cat /proc/loadavg | awk '{print $1}');"
-                                "echo UP:$(uptime -p 2>/dev/null || uptime)")
+                                PROBE)
             checks["ssh"] = dict(kv.split(":", 1) for kv in raw.splitlines() if ":" in kv)
         except Exception as e:
             with sql.get_db() as c:
@@ -97,7 +128,7 @@ async def check_asset(asset_id: str, actor: str) -> dict:
         except Exception as e:
             checks["snmp"] = {"error": str(e)[:120]}  # partial report = WARN per spec
     for key, rule in (("disk_pct", ANOMALY_RULES["disk_pct"]), ("mem_pct", ANOMALY_RULES["mem_pct"])):
-        val = (checks.get("ssh") or {}).get(key.split("_")[0].upper())
+        val = (checks.get("ssh") or checks.get("local") or {}).get(key.split("_")[0].upper())
         try:
             num = float(str(val).rstrip("%"))
             if num > rule:

@@ -1,12 +1,7 @@
 """T-MB01 + boot fail-closed (P-01 acceptance: no cosmetic checks; freeze on FAIL)."""
-import asyncio
-import json
 
-import pytest
-from fastapi.testclient import TestClient
 
 from app.core import boot as boot_mod
-from app.main import app
 
 
 def _collect_boot(client, monkeypatch=None, break_probe=None):

@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm

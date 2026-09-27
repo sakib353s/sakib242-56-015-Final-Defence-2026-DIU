@@ -13,7 +13,6 @@ producing verified_fixed / not_fixed / unable_to_verify / actioned_but_not_verif
 """
 from __future__ import annotations
 
-import asyncio
 import json
 
 from app.audit import chain
@@ -148,14 +147,18 @@ async def _run_check(f: dict, jid: str) -> tuple[str, dict, str]:
     from app.modules.assessment import adapters
 
     cat = (f["category"] or "").lower()
-    endpoint = f["endpoint"] or ""
-    host = f["host"] or ""
-    target = endpoint or host
+    endpoint = (f["endpoint"] or "").strip()
+    host = (f["host"] or "").strip()
+    # endpoint stores an observation value (e.g. "missing_hsts"), not a URL —
+    # retest always re-probes the finding's host over HTTPS unless the endpoint
+    # itself is a real URL.
+    target = endpoint if endpoint.startswith(("http://", "https://")) else host
     if not target:
         return "unable_to_verify", {}, "no endpoint/host recorded for retest"
 
     if "header" in cat or "configuration" in cat or "disclosure" in cat:
-        http = await adapters.http_analyze(target if target.startswith("http") else f"https://{target}")
+        probe = target if target.startswith(("http://", "https://")) else f"https://{target}"
+        http = await adapters.http_analyze(probe)
         headers = {k.lower(): v for k, v in (http.get("headers") or {}).items()}
         key = _expected_header(cat, f["title"])
         observed = {"status": http.get("status"), "present_headers": sorted(headers.keys())}
@@ -178,8 +181,13 @@ async def _run_check(f: dict, jid: str) -> tuple[str, dict, str]:
         observed = {"protocol": tls.get("protocol"), "cert": tls.get("subject")}
         if tls.get("error"):
             return "unable_to_verify", observed, f"tls probe failed: {tls['error']}"
-        proto_ok = (tls.get("protocol") or "").upper().replace("TLS", "TLSv") >= "TLSV1.2" \
-            if tls.get("protocol") else False
+        # numeric compare: the old lexicographic one ranked "TLSv1.1" above
+        # "TLSV1.2" (lowercase 'v' > 'V' in ASCII) — 1.0/1.1 passed as compliant
+        proto_ok = False
+        raw = (tls.get("protocol") or "").upper().replace("TLSV", "").replace("TLS", "")
+        parts = [p for p in raw.split(".") if p.isdigit()]
+        if len(parts) >= 2:
+            proto_ok = (int(parts[0]), int(parts[1])) >= (1, 2)
         return ("verified_fixed" if proto_ok else "not_fixed"), observed, \
             f"negotiated {tls.get('protocol') or 'none'}"
 

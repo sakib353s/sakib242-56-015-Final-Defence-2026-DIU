@@ -5,16 +5,13 @@ from __future__ import annotations
 
 import hashlib
 import io
-import json
-import random
 import re
 import secrets
-import time
+import asyncio
 import urllib.robotparser
 from pathlib import Path
 
 import httpx
-from bs4 import BeautifulSoup
 from PIL import Image
 
 from app.audit import chain
@@ -22,6 +19,7 @@ from app.core.config import get_settings
 from app.core.errors import CWBError
 from app.core.ids import new_id
 from app.core.security import now_iso, sha256_file
+from app.core.ssrf import guard_public_url
 from app.db import sqlite as sql
 
 S = get_settings()
@@ -119,16 +117,25 @@ def _pdf_meta(data: bytes, wm_id: str) -> bytes:
         raise CWBError(f"PDF is not parseable: {e}", status=422)
 
 
+async def _egress_guard_hook(response: httpx.Response) -> None:
+    """Checked on EVERY hop: a public seed that 302s into 169.254.0.0/16 is the
+    classic metadata-SSRF chain, so guarding only the seed URL is not enough."""
+    await asyncio.to_thread(guard_public_url, str(response.url))
+
+
 async def crawl(doc_id: str, seed_urls: list[str], actor: str, progress=None) -> dict:
     """FR-D03: scheduled copy detection. Robots-respecting, 1 req/s, depth 1."""
     doc = sql.one("SELECT * FROM docfingerprints WHERE id=?", doc_id)
     if not doc:
         raise CWBError("Document not found", status=404)
     chain.append(actor, "crawl.start", doc_id, {"seeds": seed_urls[:5]})
+    for seed in seed_urls[:10]:
+        await asyncio.to_thread(guard_public_url, seed)
     findings = []
     visited: set[str] = set()
     rp_cache: dict[str, urllib.robotparser.RobotFileParser] = {}
     async with httpx.AsyncClient(timeout=15, follow_redirects=True,
+                                 event_hooks={"response": [_egress_guard_hook]},
                                  headers={"user-agent": "cwb-docfp/5.0 (research crawler)"}) as h:
         queue = seed_urls[:10]
         while queue and len(visited) < 100:
@@ -162,7 +169,7 @@ async def crawl(doc_id: str, seed_urls: list[str], actor: str, progress=None) ->
             findings.append({"url": url, "verdict": verdict, "snapshot_sha256": snap})
             if verdict == "match":
                 chain.append(actor, "copy.found", doc_id, {"url": url})
-            time.sleep(1.0)  # politeness
+            await asyncio.sleep(1.0)  # politeness — must NOT block the event loop
             if progress:
                 await progress(len(visited), 100)
     return {"doc_id": doc_id, "visited": len(visited), "findings": findings}

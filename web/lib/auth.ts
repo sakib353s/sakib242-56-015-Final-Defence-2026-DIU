@@ -43,6 +43,18 @@ export function setSession(login: LoginResult, username: string): void {
   }
 }
 
+/** patch a silently refreshed access token into the live session (role/username unchanged) */
+export function setTokenOnly(token: string): void {
+  const s = getSession();
+  if (!s) return;
+  mem = { ...s, token };
+  try {
+    window.sessionStorage.setItem(SS_KEY, JSON.stringify(mem));
+  } catch {
+    // private mode: memory-only session is acceptable
+  }
+}
+
 export function clearSession(): void {
   mem = null;
   try {

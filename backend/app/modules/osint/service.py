@@ -17,6 +17,7 @@ from app.core.config import get_settings
 from app.core.errors import CWBError, RefusedOutOfWork
 from app.core.ids import new_id
 from app.core.security import now_iso
+from app.core.ssrf import guard_public_url
 from app.db import sqlite as sql
 
 S = get_settings()
@@ -208,11 +209,19 @@ def rubric_for(signals: dict) -> dict:
     return {k: w for k, w, src, _ in EXPOSURE_RULES if src in signals}
 
 
+async def _url_guard_hook(response: httpx.Response) -> None:
+    """Every hop (including the final URL) must clear the egress guard — a
+    redirect chain ending at link-local metadata is the payload of SSRF."""
+    await asyncio.to_thread(guard_public_url, str(response.url))
+
+
 async def url_report(url: str, actor: str) -> dict:
     """Redirect chain + headers + cert for a public URL — no scanning, just GET metadata."""
     if not url.startswith(("http://", "https://")):
         raise RefusedOutOfWork("Only http(s) public URLs are in scope")
+    await asyncio.to_thread(guard_public_url, url)
     async with httpx.AsyncClient(follow_redirects=True, timeout=15,
+                                 event_hooks={"response": [_url_guard_hook]},
                                  headers={"user-agent": "cwb-core/5.0"}) as h:
         try:
             r = await h.get(url)

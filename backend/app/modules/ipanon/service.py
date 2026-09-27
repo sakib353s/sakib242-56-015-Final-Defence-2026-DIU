@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+import shutil
 from pathlib import Path
 
 from app.audit import chain
 from app.core.config import get_settings
-from app.core.errors import CWBError, NotFound, WarrantMissing
+from app.core.errors import CWBError, NotFound
 from app.core.ids import new_id
 from app.core.security import now_iso
 from app.db import sqlite as sql
@@ -35,7 +37,15 @@ async def start(warrant_id: str, bound_session: str, actor: str,
     w = sql.one("SELECT * FROM auth_ledger WHERE id=?", warrant_id)
     deny = None
     if not w:
-        deny = "no warrant record"
+        if not S.warrant_required:
+            # lab (CWB_WARRANT_ENFORCE=auto/off): anchor keeps the FK + watchdog honest
+            from app.gateway.deps import lab_anchor_warrant
+
+            chain.safe_append(actor, "gate.warrant_lab_skip", "ipanon", {"kind": "ipanon"})
+            w = lab_anchor_warrant("ipanon", actor)
+            warrant_id = w["id"]
+        else:
+            deny = "no warrant record"
     elif w["revoked_at"]:
         deny = "warrant revoked"
     elif not warrant_window_active(w):
@@ -66,8 +76,15 @@ async def start(warrant_id: str, bound_session: str, actor: str,
             if S.tor_control_password:
                 ctl.authenticate(password=S.tor_control_password)
             fp = ctl.get_info("circuit-status")  # ensures control conn live
-            ctl.signal("NEWNEWSESSION") if ctl.get_version() >= (0, 4, 0) else None
-            return fp[:120]
+            # stem returns the version as a string ('0.4.7.13'); comparing it to a
+            # tuple raises TypeError, so normalise before the feature check.
+            try:
+                ver = tuple(int(p) for p in (ctl.get_version() or "").split(".")[:3])
+            except ValueError:
+                ver = (0, 0, 0)
+            if ver >= (0, 4, 0):
+                ctl.signal("NEWNEWSESSION")
+            return (fp or "")[:120]
 
     try:
         info = await asyncio.to_thread(_build)
@@ -81,7 +98,8 @@ async def start(warrant_id: str, bound_session: str, actor: str,
         c.execute("UPDATE circuits SET status='active', masked_ip=?, last_heartbeat=? WHERE id=?",
                   (masked, now_iso(), cid))
     _write_proxychains(cid, masked)
-    chain.append(actor, "ipanon.start", cid, {"warrant_ref": w["warrant_ref"], "masked_ip": masked})
+    chain.append(actor, "ipanon.start", cid,
+                 {"warrant_ref": w["warrant_ref"] if w else "lab-skip", "masked_ip": masked})
     return {"circuit_id": cid, "status": "active", "masked_ip": masked, "tor": info}
 
 
@@ -138,3 +156,49 @@ async def _masked_ip() -> str | None:
             return r.json().get("ip")
     except Exception:
         return None
+
+
+# --- network-path trace (Trippy) -------------------------------------------
+# Active measurement of the gateway's own Internet path. NOT anonymization and
+# never claims to be: no exit node, source IP stays visible to every hop.
+TARGET_RE = re.compile(r"^(?:(?:\d{1,3}\.){3}\d{1,3}|[0-9a-fA-F:]{3,45}|[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+)$")
+
+
+def _trippy_bin() -> Path | None:
+    found = shutil.which("trip")
+    if found:
+        return Path(found)
+    cand = sorted((Path(__file__).resolve().parents[3] / ".bin").glob("trippy-*/trip"))
+    return cand[-1] if cand else None
+
+
+async def trace_path(target: str, cycles: int = 2) -> dict:
+    """Headless unprivileged Trippy run — exec list, no shell, target regex-gated."""
+    if not TARGET_RE.match(target):
+        raise CWBError("target must be an IPv4/IPv6 address or a fully-qualified domain", status=422)
+    binary = _trippy_bin()
+    if not binary:
+        raise CWBError("Trippy binary absent — install `trip` on PATH or drop it in backend/.bin", status=503)
+    proc = await asyncio.create_subprocess_exec(
+        str(binary), target, "-m", "json", "-C", str(cycles), "-u",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=60)
+    except asyncio.TimeoutError:
+        proc.kill()
+        raise CWBError("trace timed out", status=504)
+    if proc.returncode != 0:
+        raise CWBError(f"trace failed: {err.decode(errors='replace')[:160]}", status=502)
+    data = json.loads(out)
+    hops = []
+    for h in data.get("hops", []):
+        hosts = h.get("hosts") or []
+        hops.append({
+            "ttl": h["ttl"],
+            "ip": (hosts[0].get("ip") if hosts else None) or "* * *",
+            "hostname": hosts[0].get("hostname") if hosts else None,
+            "avg_ms": h.get("avg"), "worst_ms": h.get("worst"),
+            "loss_pct": h.get("loss_pct"), "nat": h.get("nat"),
+        })
+    return {"target": data["info"]["target"], "started": data["info"]["start_timestamp"],
+            "engine": "trippy (unprivileged)", "hops": hops}

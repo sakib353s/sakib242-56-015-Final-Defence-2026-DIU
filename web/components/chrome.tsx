@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type R
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { get } from "@/lib/api";
+import { get, maybeRefresh } from "@/lib/api";
 import { clearSession, getRole, getSession, getToken, logout } from "@/lib/auth";
 import { findPage, hasRole, ROLE_TAG, visibleGroups } from "@/lib/rbac";
 import { useCwbSocket, type WsStatus } from "@/lib/ws";
@@ -52,9 +52,10 @@ interface WsHub {
   events: StreamEvent[];
   liveAlerts: LiveAlert[];
   alertCount: number;
+  clearAlerts: () => void;
 }
 
-const WsCtx = createContext<WsHub>({ alerts: "down", jobs: "down", jobList: [], events: [], liveAlerts: [], alertCount: 0 });
+const WsCtx = createContext<WsHub>({ alerts: "down", jobs: "down", jobList: [], events: [], liveAlerts: [], alertCount: 0, clearAlerts: () => {} });
 export const useWsHub = () => useContext(WsCtx);
 
 const sevTone = (sev?: unknown) => (sev === "CRITICAL" || sev === "HIGH" ? "fail" : sev === "MEDIUM" ? "warn" : "info");
@@ -145,7 +146,8 @@ export function WsProvider({ children }: { children: ReactNode }) {
   });
 
   const jobList = useMemo(() => Object.values(jobMap).slice(-4), [jobMap]);
-  return <WsCtx.Provider value={{ alerts: alertsStatus, jobs: jobsStatus, jobList, events: streamEvents, liveAlerts, alertCount }}>{children}</WsCtx.Provider>;
+  const clearAlerts = () => setAlertCount(0);
+  return <WsCtx.Provider value={{ alerts: alertsStatus, jobs: jobsStatus, jobList, events: streamEvents, liveAlerts, alertCount, clearAlerts }}>{children}</WsCtx.Provider>;
 }
 
 /* ------------------------------- navigation -------------------------------- */
@@ -175,7 +177,9 @@ function fmtUptime(): string {
   return `${String(Math.floor(t / 3600)).padStart(2, "0")}:${String(Math.floor((t % 3600) / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
 }
 
-/** The rail holds one entry per group; the context column lists that group's pages. */
+/** The rail holds one entry per group; the context column lists that group's pages.
+    The active marker is one physical pill that slides between entries — the eye
+    should feel the interface move, not repaint. */
 function Rail({
   groups,
   activeKey,
@@ -185,29 +189,36 @@ function Rail({
   activeKey: string;
   onSelect: (key: string) => void;
 }) {
-  const { alertCount } = useWsHub();
+  const { alertCount, alerts, jobs, clearAlerts } = useWsHub();
+  const live = alerts === "live" && jobs === "live";
+  const activeIndex = Math.max(0, groups.findIndex((g) => g.key === activeKey));
   return (
     <nav className="rail" aria-label="sections">
       <Link href="/dashboard" className="rail-mark" aria-label="CyberWatch-BD">
-        CW
+        <span className="rail-mark-core" aria-hidden>CW</span>
       </Link>
-      {groups.map((g) => (
-        <button
-          key={g.key}
-          type="button"
-          className={`rail-btn${g.key === activeKey ? " on" : ""}`}
-          title={g.label}
-          aria-label={g.label}
-          aria-current={g.key === activeKey ? "true" : undefined}
-          onClick={() => onSelect(g.key)}
-        >
-          <Icon name={g.icon} size={18} />
-          {g.key === "overview" && alertCount > 0 ? (
-            <span className="rail-badge" aria-label={`${alertCount} new alerts`}>{alertCount > 99 ? "99+" : alertCount}</span>
-          ) : null}
-        </button>
-      ))}
+      <div className="rail-items">
+        <span className="rail-pill" style={{ transform: `translateY(${activeIndex * 36}px)` }} aria-hidden />
+        {groups.map((g, i) => (
+          <button
+            key={g.key}
+            type="button"
+            className={`rail-btn${g.key === activeKey ? " on" : ""}`}
+            title={g.label}
+            aria-label={g.label}
+            aria-current={g.key === activeKey ? "true" : undefined}
+            onClick={() => { if (g.key === "overview") clearAlerts(); onSelect(g.key); }}
+            style={{ zIndex: i + 1 }}
+          >
+            <span className="rail-ico" aria-hidden><Icon name={g.icon} size={18} /></span>
+            {g.key === "overview" && alertCount > 0 ? (
+              <span className="rail-badge" aria-hidden>{alertCount > 99 ? "99+" : alertCount}</span>
+            ) : null}
+          </button>
+        ))}
+      </div>
       <span className="rail-spacer" />
+      <span className={`rail-live ${live ? "on" : ""}`} title={live ? "Live telemetry connected" : "Telemetry offline"} aria-hidden />
       <span className="rail-div" />
       <ThemeToggle className="icon-btn" iconOnly />
     </nav>
@@ -257,12 +268,14 @@ function Context({
         ) : (
           <>
             <div className="context-title">{active?.label}</div>
+            <div className="context-underline" aria-hidden />
             <div className="context-hint">{active?.hint}</div>
           </>
         )}
       </div>
 
       <div className="context-search">
+        <span className="cs-ico" aria-hidden><Icon name="search" size={13} /></span>
         <input
           className="text"
           value={filter}
@@ -272,18 +285,18 @@ function Context({
         />
       </div>
 
-      <div className="ctx-list">
+      <div className="ctx-list" key={`${activeKey}-${expandAll}`}>
         {!q && groups.length > 1 ? (
-          <button type="button" className="ctx-item" onClick={toggleAll} style={{ color: "var(--muted)" }}>
+          <button type="button" className="ctx-item ctx-toggle" onClick={toggleAll}>
             <span className="nav-ico" aria-hidden><Icon name="chevron" size={14} /></span>
-            <span className="nav-label">{expandAll ? "Show this section only" : "Show all sections"}</span>
+            <span className="nav-label">{expandAll ? "Collapse to this section" : "Expand all sections"}</span>
           </button>
         ) : null}
 
         {shownGroups.map((g) => (
           <div key={g.key}>
             {q || expandAll ? <div className="ctx-head">{g.label}</div> : null}
-            {g.items.map((i) => (
+            {g.items.map((i, n) => (
               <Link
                 key={i.href}
                 href={i.href}
@@ -291,6 +304,7 @@ function Context({
                 aria-current={pathname === i.href ? "page" : undefined}
                 onClick={onNavigate}
                 title={i.desc}
+                style={{ animationDelay: `${Math.min(n * 22, 240)}ms` }}
               >
                 <span className="nav-ico" aria-hidden><Icon name={i.icon} size={17} /></span>
                 <span className="nav-label">{i.label}</span>
@@ -303,11 +317,10 @@ function Context({
       </div>
 
       <div className="context-foot">
-        Core <b>{health?.core ?? "…"}</b> · {health?.env ?? "…"}
-        <br />
-        Signed policy <b>{health?.policy_hash ? trunc(health.policy_hash, 12) : "—"}</b>
-        <br />
-        Session <b>{mounted ? fmtUptime() : "—"}</b>
+        <div className="cf-row"><span>core</span><b>{health?.core ?? "…"}</b></div>
+        <div className="cf-row"><span>policy</span><b>{health?.policy_hash ? trunc(health.policy_hash, 12) : "—"}</b></div>
+        <div className="cf-row"><span>session</span><b>{mounted ? fmtUptime() : "—"}</b></div>
+        <div className="cf-row cf-env"><span>mode</span><b>{health?.env ?? "…"}</b></div>
       </div>
     </aside>
   );
@@ -505,6 +518,7 @@ export function Chrome({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!getToken()) window.location.replace("/boot");
+    else void maybeRefresh(); // quiet top-up: a 15-min token should never interrupt work
   }, []);
 
   useEffect(() => {

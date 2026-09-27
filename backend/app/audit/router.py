@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
-from app.audit import chain, verifier
+from app.audit import chain
 from app.gateway.deps import Principal, require_super
 import asyncio
 

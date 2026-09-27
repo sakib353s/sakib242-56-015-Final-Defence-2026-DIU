@@ -1,17 +1,13 @@
 """Boot WS endpoint + single-use boot token issuance."""
 
-import asyncio
 
-from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 
 from app.core.boot import BootRunner
 from app.core.config import get_settings
 from app.core.ids import new_token
 from app.core.security import now_iso
 from app.db import sqlite as sql
-from app.gateway.deps import Principal, require_super
 from app.gateway.middleware import limiter
 
 router = APIRouter(prefix="/api/v1/boot", tags=["boot"])

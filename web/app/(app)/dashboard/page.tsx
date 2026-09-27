@@ -9,7 +9,7 @@ import Link from "next/link";
 import { get } from "@/lib/api";
 import { getSession } from "@/lib/auth";
 import { hasRole } from "@/lib/rbac";
-import { bytes, clock, fmtTs, humanAction, humanStatus, statusTone, trunc } from "@/lib/format";
+import { bytes, clock, fmtTs, humanAction, humanStatus, sevTone, trunc } from "@/lib/format";
 import { useMounted, useTick } from "@/components/ui";
 import { useWsHub, type LiveAlert } from "@/components/chrome";
 import { DonutStat, MiniLine, RankList, SEV_COLORS, Trend } from "@/components/charts";
@@ -193,9 +193,9 @@ export default function DashboardPage() {
                   <span style={{ minWidth: 0 }}>
                     <span className="feed-sig" title={a.signature}>{a.signature || "unsigned alert"}</span>
                     <span className="feed-meta">
-                      <Chip tone={statusTone(a.severity)} label={humanStatus(a.severity)} />
+                      <Chip tone={sevTone(a.severity)} label={humanStatus(a.severity)} />
                       {a.src_ip ?? "unknown"} → {a.dest_ip ?? "unknown"}
-                      {a.mitre ? <span className="chip dim">{a.mitre}</span> : null}
+                      {a.mitre ? <Link href={`/soc/mitre/${a.mitre}`} className="chip dim" title="Open technique war-room">{a.mitre}</Link> : null}
                       {ago(a.ts) ? <span>{ago(a.ts)}</span> : null}
                     </span>
                   </span>
@@ -401,7 +401,7 @@ export default function DashboardPage() {
                   <tr key={a.id} className="sev-strip" style={{ "--sev": SEV_VAR[a.severity] ?? "var(--line)" } as React.CSSProperties}>
                     <td className="cell-id">{fmtTs(a.ts)}</td>
                     <td>
-                      <Chip tone={statusTone(a.severity)} label={humanStatus(a.severity)} />
+                      <Chip tone={sevTone(a.severity)} label={humanStatus(a.severity)} />
                     </td>
                     <td>{trunc(a.signature, 52)}</td>
                     <td className="cell-id">

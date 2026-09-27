@@ -7,15 +7,16 @@ import { elapsedSince, fmtTs, humanStatus, statusTone, trunc } from "@/lib/forma
 import { useTick } from "@/components/ui";
 import { useStepUp } from "@/components/stepup";
 import { useToast } from "@/components/toast";
-import { WarrantPicker } from "@/components/warrant";
+import { WarrantPicker, useWarrantEnforced } from "@/components/warrant";
 import { Chip, EmptyRows, ErrBanner, Field, KV, LoaderRows, Panel } from "@/components/ui";
-import type { Circuit } from "@/lib/types";
+import type { Circuit, TraceResult } from "@/lib/types";
 
 export default function IpPage() {
   useTick(1000);
   const toast = useToast();
   const { requestTotp } = useStepUp();
   const [warrantId, setWarrantId] = useState("");
+  const enf = useWarrantEnforced();
   const [selected, setSelected] = useState<string | null>(null);
 
   const circuits = useQuery({
@@ -50,6 +51,11 @@ export default function IpPage() {
     },
   });
 
+  const [traceTarget, setTraceTarget] = useState("");
+  const trace = useMutation({
+    mutationFn: () => get<TraceResult>(`/ip/trace?target=${encodeURIComponent(traceTarget.trim())}&cycles=2`),
+  });
+
   const sel = list.find((c) => c.id === selected) ?? null;
 
   return (
@@ -75,7 +81,7 @@ export default function IpPage() {
             <button
               type="button"
               className="btn primary"
-              disabled={!warrantId || start.isPending || !!live}
+              disabled={(enf && !warrantId) || start.isPending || !!live}
               onClick={async () => {
                 const code = await requestTotp("Build a new anonymization circuit");
                 if (code) start.mutate(code);
@@ -155,6 +161,51 @@ export default function IpPage() {
             )}
           </Panel>
         </div>
+      </div>
+
+      <div className="span-12">
+        <Panel title="Network path trace (Trippy)">
+          <div className="form-row">
+            <Field label="Target host or IP">
+              <input className="text" value={traceTarget} onChange={(e) => setTraceTarget(e.target.value)} placeholder="example.com or 1.0.0.1" maxLength={253} />
+            </Field>
+            <div style={{ paddingTop: 22 }}>
+              <button type="button" className="btn primary" disabled={traceTarget.trim().length < 3 || trace.isPending} onClick={() => trace.mutate()}>
+                {trace.isPending ? "Tracing…" : "Trace path"}
+              </button>
+            </div>
+          </div>
+          <div className="page-note" style={{ marginTop: 2 }}>
+            Maps the real Internet route from this gateway to the target — every hop sees this machine's address.
+            It is a measurement, not anonymization, and needs no circuit or warrant.
+          </div>
+          {trace.isError ? <ErrBanner error={trace.error} /> : null}
+          {trace.data ? (
+            <div style={{ marginTop: 10 }}>
+              <div className="page-note" style={{ marginBottom: 6 }}>
+                {trace.data.hops.length} hop{trace.data.hops.length === 1 ? "" : "s"} to {trace.data.target.hostname}
+                {" "}{trace.data.target.ip !== trace.data.target.hostname ? `(${trace.data.target.ip})` : ""} · {trace.data.engine} · {fmtTs(trace.data.started)}
+              </div>
+              <table className="tbl">
+                <thead>
+                  <tr><th>TTL</th><th>Address</th><th>Hostname</th><th style={{ textAlign: "right" }}>Avg (ms)</th><th style={{ textAlign: "right" }}>Worst</th><th style={{ textAlign: "right" }}>Loss</th></tr>
+                </thead>
+                <tbody>
+                  {trace.data.hops.map((h) => (
+                    <tr key={h.ttl}>
+                      <td className="cell-id">{h.ttl}</td>
+                      <td style={{ fontFamily: "var(--font-mono)" }}>{h.ip}</td>
+                      <td className="dim">{h.hostname && h.hostname !== h.ip ? h.hostname : "—"}</td>
+                      <td style={{ textAlign: "right" }}>{h.avg_ms ?? "—"}</td>
+                      <td style={{ textAlign: "right" }}>{h.worst_ms ?? "—"}</td>
+                      <td style={{ textAlign: "right", color: Number(h.loss_pct) > 0 ? "var(--warn)" : undefined }}>{h.loss_pct ?? "—"}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </Panel>
       </div>
     </>
   );

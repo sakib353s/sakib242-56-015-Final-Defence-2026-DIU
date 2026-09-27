@@ -24,6 +24,7 @@ export default function BootPage() {
   const fitRef = useRef<FitType | null>(null);
   const queueRef = useRef<string[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
+  const runGen = useRef(0);
   const eggRef = useRef("");
   const instantRef = useRef(false);
 
@@ -47,10 +48,13 @@ export default function BootPage() {
   const replayBanner = useCallback(() => {
     write("\r\n");
     for (const b of NICE_BANNER) write(recode(b) + "\r\n");
-    write("\r\n\x1b[38;2;60;235;255m[ easter egg ] nice.\x1b[0m\r\n\r\n");
+    write("\r\n\x1b[38;2;14;138;163m[ easter egg ] nice.\x1b[0m\r\n\r\n");
   }, [write]);
 
   const start = useCallback(async () => {
+    // generation token: handlers of the PREVIOUS socket fire their onclose
+    // asynchronously after RE-ARM started and used to re-freeze the fresh run
+    const gen = ++runGen.current;
     setPhase("arm");
     setFrozen(null);
     setTokenOk(false);
@@ -58,7 +62,7 @@ export default function BootPage() {
     setLineCount(0);
     setLastLine(null);
     wsRef.current?.close();
-    write("\r\n\x1b[38;2;150;168;182m──── re-arming boot runner ────\x1b[0m\r\n");
+    write("\r\n\x1b[38;2;82;96;121m──── re-arming boot runner ────\x1b[0m\r\n");
     let tok: BootToken;
     try {
       tok = await apiFetch<BootToken>("/boot/token", { method: "POST" });
@@ -68,13 +72,15 @@ export default function BootPage() {
       return;
     }
     setTokenOk(true);
-    write(`\x1b[38;2;150;168;182m[boot] single-use token acquired (ttl ${tok.ttl_s}s) → /ws/boot\x1b[0m\r\n`);
+    write(`\x1b[38;2;82;96;121m[boot] single-use token acquired (ttl ${tok.ttl_s}s) → /ws/boot\x1b[0m\r\n`);
     const base = (process.env.NEXT_PUBLIC_WS_BASE || "ws://127.0.0.1:8471").replace(/\/$/, "");
+    if (runGen.current !== gen) return; // a newer re-arm superseded this one during the token fetch
     const ws = new WebSocket(`${base}/ws/boot?token=${encodeURIComponent(tok.boot_token)}`);
     wsRef.current = ws;
     setPhase("streaming");
     ws.onopen = () => setWsOk(true);
     ws.onmessage = (ev) => {
+      if (runGen.current !== gen) return;
       let line: BootLine;
       try {
         line = JSON.parse(ev.data as string) as BootLine;
@@ -97,6 +103,7 @@ export default function BootPage() {
       }
     };
     ws.onclose = () => {
+      if (runGen.current !== gen) return;
       setWsOk(false);
       setPhase((p) => (p === "gate" ? p : p === "frozen" ? p : "frozen"));
       setFrozen((f) =>
@@ -151,7 +158,7 @@ export default function BootPage() {
         }
       });
       ro.observe(hostRef.current);
-      term.writeln("\x1b[38;2;150;168;182mterminal armed. awaiting boot runner…\x1b[0m");
+      term.writeln("\x1b[38;2;82;96;121mterminal armed. awaiting boot runner…\x1b[0m");
       void start();
     })();
     return () => {

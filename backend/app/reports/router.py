@@ -1,7 +1,5 @@
 """Unified report index + signed downloads (traversal-safe: ids only, never paths)."""
 
-import hmac
-import hashlib
 import time
 from pathlib import Path
 

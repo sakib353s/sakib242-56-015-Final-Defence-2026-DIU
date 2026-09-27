@@ -45,6 +45,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/pentest", label: "Pentest Engine", icon: "target", min: "ANALYST", desc: "Reconnaissance sessions run against targets inside an authorized scope." },
       { href: "/tools", label: "Tool Library", icon: "grid", min: "ANALYST", desc: "Command-line security tools installed on this server and their versions." },
       { href: "/vuln", label: "Vulnerability Scanner", icon: "bug", min: "ANALYST", desc: "Service fingerprinting correlated with published vulnerability data." },
+      { href: "/ledger", label: "Authorization Ledger", icon: "shield", min: "SUPER_ADMIN", desc: "Issue, review and revoke the written-authorization warrants that unlock active security-testing tools." },
       { href: "/remediation", label: "Remediation", icon: "wrench", min: "SUPER_ADMIN", desc: "Approved change jobs that apply fixes to affected hosts." },
     ],
   },
@@ -71,6 +72,7 @@ export const NAV_GROUPS: NavGroup[] = [
     icon: "shield",
     items: [
       { href: "/ip", label: "IP Anonymizer", icon: "eye-off", min: "ANALYST", desc: "Route a session through a Tor circuit for an authorized investigation." },
+      { href: "/fim", label: "Integrity & Detection", icon: "shield", min: "ANALYST", desc: "File integrity monitoring policies, integrity events and the versioned detection-rule engine." },
       { href: "/hardware", label: "Hardware Monitor", icon: "cpu", min: "ANALYST", desc: "Temperatures, loads, storage and physical integrity on this machine." },
       { href: "/victim", label: "Victim Support", icon: "heart", min: "ANALYST", desc: "Complaint intake and case records for affected individuals." },
     ],
@@ -81,7 +83,8 @@ export const NAV_GROUPS: NavGroup[] = [
     hint: "Open-source research and evidence examination",
     icon: "radar",
     items: [
-      { href: "/osint", label: "OSINT & Breach", icon: "radar", min: "ANALYST", desc: "Public-source research, exposure lookups and attack surface discovery." },
+      { href: "/threat-intel", label: "Threat Intelligence", icon: "radar", min: "ANALYST", desc: "STIX 2.1 intelligence store: indicators, actors, malware and reports linked to findings and assets." },
+      { href: "/osint", label: "OSINT & Breach", icon: "globe", min: "ANALYST", desc: "Public-source research, exposure lookups and attack surface discovery." },
       { href: "/document", label: "Document Forensics", icon: "file", min: "ANALYST", desc: "Metadata and authenticity analysis of submitted files." },
     ],
   },

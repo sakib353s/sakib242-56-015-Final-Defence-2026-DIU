@@ -61,6 +61,11 @@ def ingest_eve_line(line: str) -> dict | None:
                                    "src_ip", "dest_ip", "mitre", "status", "ts", "raw_json")),
         )
     mongo.store("alerts", {**row, "raw": None})
+    try:
+        from app.modules.soc import detection
+        detection.evaluate({**row, "source": "suricata"}, already_alerted=True)
+    except Exception:
+        pass  # rule engine must never stall the EVE pipeline
     return row
 
 
@@ -133,9 +138,12 @@ async def unblock_ip(block_id: str, actor: str, reason: str = "manual/rollback-t
     via = row["deployed_via"]
     ok, err = True, ""
     if via == "host-agent" and S.block_agent_script:
-        p = await asyncio.to_thread(subprocess.run, [S.block_agent_script, "unblock", row["ip"]],
-                                    capture_output=True, text=True, timeout=20)
-        ok, err = p.returncode == 0, p.stderr[:200]
+        try:
+            p = await asyncio.to_thread(subprocess.run, [S.block_agent_script, "unblock", row["ip"]],
+                                        capture_output=True, text=True, timeout=20)
+            ok, err = p.returncode == 0, p.stderr[:200]
+        except Exception as e:  # TimeoutExpired/FileNotFoundError must not kill the watchdog
+            ok, err = False, f"{type(e).__name__}: {e}"
     elif via == "iptables":
         try:
             p = await asyncio.to_thread(subprocess.run,
@@ -158,5 +166,11 @@ async def block_expiry_watchdog():
     while True:
         for r in sql.all_("SELECT id FROM ip_blocks WHERE status='active' AND expires_at < ?",
                           now_iso()):
-            await unblock_ip(r["id"], "system:watchdog", "rollback-timer")
+            try:
+                await unblock_ip(r["id"], "system:watchdog", "rollback-timer")
+            except Exception as e:
+                # an unsupervised create_task: any escape here would silently
+                # retire the watchdog and leave expired DROPs in place forever
+                chain.safe_append("system:watchdog", "soc.watchdog_error", r["id"],
+                                  {"error": str(e)[:200]})
         await asyncio.sleep(60)

@@ -56,15 +56,41 @@ def extract(archive, name, target):
     return False
 
 
+# Per-tool version flag. `ffuf -version` and `dalfox -version` are NOT valid —
+# ffuf wants -V, dalfox wants --version; anything else exits 2 with a usage dump,
+# which would make every probe lie. Must stay in step with VERSION_ARGV in
+# app/modules/tools/service.py.
+VERSION_ARGV = {
+    "subfinder": ["-version"], "naabu": ["-version"], "httpx": ["-version"],
+    "katana": ["-version"], "nuclei": ["-version"], "ffuf": ["-V"],
+    "dalfox": ["--version"],
+}
+
+
+def probe(name, target=None):
+    """Run the tool's real version flag. Returns (rc, first_nonempty_output_line).
+
+    The projectdiscovery banners start with a blank line, so the first *non-empty*
+    line is the version line — not splitlines()[0].
+    """
+    argv = [target or os.path.join(BIN, name)] + VERSION_ARGV[name]
+    try:
+        r = subprocess.run(argv, capture_output=True, timeout=20)
+    except Exception:
+        return -1, ""
+    out = (r.stdout + r.stderr).decode(errors="replace")
+    for line in out.splitlines():
+        if line.strip():
+            return r.returncode, line.strip()[:80]
+    return r.returncode, ""
+
+
 def already_ok(name):
     p = os.path.join(BIN, name)
     if not os.path.exists(p):
         return False
-    try:
-        r = subprocess.run([p, "-version"], capture_output=True, timeout=20)
-        return r.returncode == 0 or bool(r.stdout or r.stderr)
-    except Exception:
-        return False
+    rc, line = probe(name)
+    return rc == 0 and bool(line)
 
 
 def main():
@@ -86,9 +112,11 @@ def main():
                 continue
             os.chmod(target, 0o755)
             os.remove(arc)
-            r = subprocess.run([target, "-version"], capture_output=True, timeout=20)
-            out = (r.stdout + r.stderr).decode(errors="replace")
-            results[name] = "ok: " + out.splitlines()[0][:80] if out else "ok"
+            rc, line = probe(name)
+            if rc != 0 or not line:
+                results[name] = f"FAIL: smoke test exited {rc}"
+            else:
+                results[name] = "ok: " + line
         except Exception as e:
             results[name] = f"FAIL: {e}"
         print(f"{name}: {results[name]}", flush=True)
@@ -99,9 +127,17 @@ def main():
         r = subprocess.run(["git", "clone", "--depth", "1",
                             "https://github.com/sqlmapproject/sqlmap", sqlmap_dir],
                            capture_output=True, timeout=600)
-        print("sqlmap clone:", "ok" if r.returncode == 0 else r.stderr.decode()[:200], flush=True)
+        line = "ok" if r.returncode == 0 else "FAIL: " + r.stderr.decode()[:200]
+        print("sqlmap clone:", line, flush=True)
+        if r.returncode != 0:
+            results["sqlmap"] = "FAIL: git clone failed"
     else:
         print("sqlmap: present", flush=True)
+        r = subprocess.run([sys.executable, os.path.join(sqlmap_dir, "sqlmap.py"), "--version"],
+                           capture_output=True, timeout=30)
+        out = (r.stdout + r.stderr).decode(errors="replace").strip()
+        results["sqlmap"] = (("ok: " + out.splitlines()[0][:80]) if r.returncode == 0 and out
+                             else f"FAIL: sqlmap --version exited {r.returncode}")
 
     # ffuf wordlist (SecLists common.txt, ~46KB)
     wl = os.path.join(HERE, "wordlists", "common.txt")
@@ -111,7 +147,7 @@ def main():
                  "Discovery/Web-Content/common.txt", wl)
     print("wordlist lines:", sum(1 for _ in open(wl)), flush=True)
 
-    bad = [k for k, v in results.items() if v.startswith("FAIL")]
+    bad = [k for k, v in results.items() if v.startswith("FAIL") or v == "extract-failed"]
     print(json.dumps(results, indent=1))
     sys.exit(1 if bad else 0)
 

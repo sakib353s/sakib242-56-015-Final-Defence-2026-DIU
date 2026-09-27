@@ -10,7 +10,6 @@ import httpx
 
 from app.audit import chain
 from app.core.config import get_settings
-from app.core.errors import CWBError
 from app.core.ids import new_id
 from app.core.jobs import job_finish, job_progress, job_start
 from app.core.security import now_iso
@@ -20,7 +19,16 @@ from app.modules.recon import fingerprint_many, naabu_ports
 
 S = get_settings()
 NVD = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+_NVD_CACHE_MAX = 256
 _nvd_cache: dict[str, list[dict]] = {}
+
+
+def _cache_nvd(key: str, out: list[dict]) -> None:
+    # dict keeps insertion order; pop-first gives a cheap FIFO bound so the
+    # per-CVE-id cache cannot grow with the process lifetime
+    if len(_nvd_cache) >= _NVD_CACHE_MAX:
+        _nvd_cache.pop(next(iter(_nvd_cache)))
+    _nvd_cache[key] = out
 
 
 def _parse_nvd(payload: dict) -> list[dict]:
@@ -63,7 +71,7 @@ async def _nvd_lookup(query: str, cpe: str | None = None) -> list[dict]:
                 r = await h.get(NVD, params={"cpeName": cpe, "resultsPerPage": 20}, headers=headers)
                 if r.status_code == 200:
                     out = _parse_nvd(r.json())
-                    _nvd_cache[key] = out
+                    _cache_nvd(key, out)
                     return out
             except httpx.HTTPError:
                 pass
@@ -77,7 +85,7 @@ async def _nvd_lookup(query: str, cpe: str | None = None) -> list[dict]:
                 if r.status_code != 200:
                     return []
                 out = _parse_nvd(r.json())
-                _nvd_cache[key] = out
+                _cache_nvd(key, out)
                 return out
             except httpx.HTTPError:
                 await asyncio.sleep(2)

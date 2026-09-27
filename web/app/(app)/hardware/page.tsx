@@ -20,6 +20,9 @@ const READING_LABEL: Record<string, string> = {
   disk: "Disk usage",
   mem: "Memory usage",
   load: "Load average",
+  temp: "Temperature",
+  os: "Operating system",
+  up: "Uptime",
   uptime: "Uptime",
   sysdescr: "System description",
   sysuptime: "System uptime",
@@ -122,10 +125,22 @@ export default function HardwarePage() {
               <ErrBanner error={assets.error} onRetry={() => assets.refetch()} />
             ) : noAssets ? (
               <>
-                <EmptyRows what="No assets registered. Credentials encrypt at rest; an asset locks after three failed SSH sign-ins." />
-                <button type="button" className="btn small primary" style={{ marginTop: 8 }} onClick={() => setAddOpen(true)}>
-                  Register the first asset
-                </button>
+                <EmptyRows what="No assets registered. Credentials encrypt at rest; an asset locks after three failed SSH sign-ins. A machine hosted by this very gateway can be monitored locally — no SSH credentials needed." />
+                <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                  <button type="button" className="btn small primary" onClick={() => setAddOpen(true)}>
+                    Register the first asset
+                  </button>
+                  <button
+                    type="button"
+                    className="btn small"
+                    onClick={() => {
+                      setF({ name: "This machine (local probe)", kind: "workstation", host: "localhost", ssh_port: "22", ssh_user: "", ssh_password: "", snmp_community: "" });
+                      setAddOpen(true);
+                    }}
+                  >
+                    Monitor this machine
+                  </button>
+                </div>
               </>
             ) : (
               <>

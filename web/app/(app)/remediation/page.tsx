@@ -6,7 +6,7 @@ import { get, post } from "@/lib/api";
 import { fmtTs, humanStatus, statusTone, trunc } from "@/lib/format";
 import { useStepUp } from "@/components/stepup";
 import { useToast } from "@/components/toast";
-import { WarrantPicker } from "@/components/warrant";
+import { WarrantPicker, useWarrantEnforced } from "@/components/warrant";
 import { sevVar } from "@/components/findings";
 import { Chip, EmptyRows, ErrBanner, Field, LoaderRows, Modal, Panel } from "@/components/ui";
 import type { Finding, HwAsset, RemediationDiff, RemediationJob } from "@/lib/types";
@@ -34,6 +34,7 @@ export default function RemediationPage() {
   const [findingId, setFindingId] = useState("");
   const [host, setHost] = useState("");
   const [warrantId, setWarrantId] = useState("");
+  const enf = useWarrantEnforced();
   const [assetId, setAssetId] = useState("");
   const [attested, setAttested] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
@@ -182,7 +183,7 @@ export default function RemediationPage() {
           <button
             type="button"
             className="btn primary"
-            disabled={!attested || !findingId || !host || !warrantId}
+            disabled={!attested || !findingId || !host || (enf && !warrantId)}
             onClick={async () => {
               const code = await requestTotp(`remediation: draft job for ${host}`);
               if (code) create.mutate(code);

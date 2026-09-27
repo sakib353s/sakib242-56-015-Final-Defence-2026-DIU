@@ -6,7 +6,7 @@ import { get, post } from "@/lib/api";
 import { fmtTs, humanStatus, statusTone, trunc } from "@/lib/format";
 import { useStepUp } from "@/components/stepup";
 import { useToast } from "@/components/toast";
-import { WarrantPicker } from "@/components/warrant";
+import { WarrantPicker, useWarrantEnforced } from "@/components/warrant";
 import { Bars, DonutStat, SEV_COLORS } from "@/components/charts";
 import { FindingRow, SevBar } from "@/components/findings";
 import { Chip, EmptyRows, ErrBanner, Field, LoaderRows, Modal, Panel } from "@/components/ui";
@@ -19,6 +19,7 @@ export default function VulnPage() {
   const { requestTotp } = useStepUp();
 
   const [warrantId, setWarrantId] = useState("");
+  const enf = useWarrantEnforced();
   const [target, setTarget] = useState("");
   const [attestOpen, setAttestOpen] = useState(false);
   const [attested, setAttested] = useState(false);
@@ -88,7 +89,7 @@ export default function VulnPage() {
             <Field label="Target" hint="Service fingerprinting, correlation with public NVD data, and an aggregate risk score from 0 to 100.">
               <input className="text" placeholder="10.0.0.5 or host.example.com" value={target} onChange={(e) => setTarget(e.target.value)} maxLength={253} />
             </Field>
-            <button type="button" className="btn primary" disabled={!warrantId || target.trim().length < 4} onClick={() => setAttestOpen(true)}>
+            <button type="button" className="btn primary" disabled={(enf && !warrantId) || target.trim().length < 4} onClick={() => setAttestOpen(true)}>
               Start scan
             </button>
           </div>

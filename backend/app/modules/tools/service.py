@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import sys
 import tempfile
 from pathlib import Path
 
@@ -25,7 +26,12 @@ URL_RE = re.compile(r"^https?://[^\s]+$")
 
 
 def _host_of(url: str) -> str:
-    return url.split("://", 1)[1].split("/", 1)[0].split("@")[-1].split(":")[0].lower()
+    # authority = everything up to path/query/fragment, userinfo stripped LAST-separator
+    # so it yields the REAL connect host. Stripping ?/# first is what closes the scope
+    # drift where "http://good.com?x=@evil.com" was scoped as evil.com but scanned good.com.
+    rest = url.split("://", 1)[-1]  # scheme may be absent on garbage input — never crash
+    rest = rest.split("#", 1)[0].split("?", 1)[0]
+    return rest.split("/", 1)[0].split("@")[-1].split(":")[0].lower()
 
 
 def _ok_host(t: str):
@@ -59,6 +65,20 @@ def _sev(d):
     return (d.get("info") or {}).get("severity", "?")
 
 
+def _naabu_rows(out: str) -> list[dict]:
+    """naabu re-emits the same open port on retry; keep the first sighting only."""
+    seen: set[object] = set()
+    rows: list[dict] = []
+    for r in _jsonl(out, lambda d: {"item": f"tcp/{d.get('port')} open",
+                                    "port": d.get("port"),
+                                    "service": d.get("service", "")}):
+        if r["port"] in seen:
+            continue
+        seen.add(r["port"])
+        rows.append(r)
+    return rows
+
+
 TOOLS: dict[str, dict] = {
     # ---- passive: public sources only, no packet to target ----
     "subfinder": {
@@ -75,9 +95,7 @@ TOOLS: dict[str, dict] = {
         "validate": _ok_host,
         "argv": lambda t, env: [str(BIN / "naabu"), "-host", t,
                                 "-top-ports", "1000", "-rate", "500", "-json", "-silent"],
-        "parse": lambda out: _jsonl(out, lambda d: {"item": f"tcp/{d.get('port')} open",
-                                                    "port": d.get("port"),
-                                                    "service": d.get("service", "")}),
+        "parse": _naabu_rows,
     },
     "httpx": {
         "label": "httpx", "purpose": "HTTP/TLS probe with technology detection",
@@ -87,7 +105,7 @@ TOOLS: dict[str, dict] = {
                                 "-title", "-tech-detect", "-follow-redirects"],
         "parse": lambda out: _jsonl(out, lambda d: {
             "item": f"{d.get('status_code')} {d.get('url')}",
-            "title": d.get("title", ""), "tech": ",".join(d.get("tech-detect", []) or [])}),
+            "title": d.get("title", ""), "tech": ",".join(d.get("tech", []) or [])}),
     },
     "katana": {
         "label": "katana", "purpose": "Web crawler, depth 2",
@@ -107,14 +125,20 @@ TOOLS: dict[str, dict] = {
     },
     "nuclei": {
         "label": "nuclei", "purpose": "Template scanner, 9000+ CVE and misconfiguration checks",
-        "input": "url", "active": True, "timeout": 300,
+        "input": "url", "active": True, "timeout": 600,
         "validate": _ok_url,
+        # The installed template store is ~18k templates; a full pass needs >5 min
+        # on a healthy host, so the cap and per-request budget are explicit.
         "argv": lambda t, env: [str(BIN / "nuclei"), "-u", t, "-jsonl", "-silent",
                                 "-severity", "info,low,medium,high,critical",
-                                "-ni", "-duc"],
+                                "-timeout", "5", "-retries", "0", "-ni", "-duc"],
+        # `matcher-name` is what separates one finding from the next: this template
+        # fires ~10 matchers per URL (one per missing header), all sharing info.name
+        # and matched-at. Dropping it renders 10 identical rows that look like dupes.
         "parse": lambda out: _jsonl(out, lambda d: {
             "item": (d.get("info") or {}).get("name", "?"),
-            "severity": _sev(d), "matched": d.get("matched", ""),
+            "severity": _sev(d), "matched": d.get("matched-at", ""),
+            "matcher": d.get("matcher-name", "") or "",
             "id": (d.get("info") or {}).get("template-id", d.get("template-id", ""))}),
     },
     "dalfox": {
@@ -131,9 +155,12 @@ TOOLS: dict[str, dict] = {
         "argv": lambda t, env: [env["python"], str(SQLMAP), "-u", t, "--batch",
                                 "--level", "1", "--risk", "1", "--timeout", "20",
                                 "--threads", "2", "--technique", "BEU"],
+        # "[CRITICAL]" kept so early aborts (404 target, WAF block, unreachable)
+        # are visible as rows instead of a silent count=0 exit!=0
         "parse": lambda out: [{"item": ln.strip()} for ln in out.splitlines()
                               if any(k in ln for k in ("is vulnerable", "might be injectable",
-                                                       "parameter", "back-end DBMS", "No parameter"))],
+                                                       "parameter", "back-end DBMS", "No parameter",
+                                                       "CRITICAL"))],
     },
 }
 
@@ -172,7 +199,7 @@ async def _ver(tool: str) -> str:
     cached = TOOLS[tool].get("version")
     if cached:
         return cached
-    argv = ([__import__("sys").executable, str(SQLMAP)] if tool == "sqlmap"
+    argv = ([sys.executable, str(SQLMAP)] if tool == "sqlmap"
             else [str(BIN / tool)]) + VERSION_ARGV[tool]
     try:
         r = await asyncio.create_subprocess_exec(*argv,
@@ -206,57 +233,79 @@ def find_warrant(user_id: str, target: str) -> dict | None:
     return None
 
 
+def _dalfox_argv(target: str, rep: Path) -> list[str]:
+    return [str(BIN / "dalfox"), "scan", target, "--no-color", "-f", "jsonl", "-o", str(rep)]
+
+
+def _ffuf_argv(target: str, rep: Path) -> list[str]:
+    return [str(BIN / "ffuf"), "-u", target.rstrip("/") + "/FUZZ",
+            "-w", str(WORDLIST), "-mc", "200,204,301,302,403",
+            "-t", "40", "-timeout", "8", "-maxtime", "60",
+            "-s", "-o", str(rep), "-of", "json"]
+
+
+def _report_rows(tool: str, rep: Path) -> list[dict]:
+    """Rows from the file-report tools (dalfox jsonl, ffuf json)."""
+    if not rep.exists():
+        return []
+    if tool == "ffuf":
+        try:
+            return [{"item": str((r.get("input") or {}).get("FUZZ", "")),
+                     "status": r.get("status"), "length": r.get("length"),
+                     "words": r.get("words")}
+                    for r in (json.loads(rep.read_text() or "{}").get("results") or [])]
+        except (json.JSONDecodeError, ValueError):
+            return []
+    rows = []
+    for ln in rep.read_text().splitlines():
+        try:
+            d = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        if "meta" in d:
+            continue
+        rows.append({"item": str(d.get("vuln_id") or d.get("type") or d.get("message") or "finding"),
+                     "severity": str(d.get("sev") or d.get("severity") or ""),
+                     "param": str(d.get("param", "")),
+                     "inject": str(d.get("inject") or d.get("payload") or "")[:80]})
+    return rows
+
+
 async def run_dalfox(target: str, timeout: int):
     """dalfox needs a report file; everything else is a plain argv run."""
     with tempfile.TemporaryDirectory() as td:
         rep = Path(td) / "report.jsonl"
-        argv = [str(BIN / "dalfox"), "scan", target, "--no-color", "-f", "jsonl",
-                "-o", str(rep)]
-        rc, out, err = await _exec(argv, {}, timeout)
-        rows = []
-        if rep.exists():
-            for ln in rep.read_text().splitlines():
-                try:
-                    d = json.loads(ln)
-                except json.JSONDecodeError:
-                    continue
-                if "meta" in d:
-                    continue
-                rows.append({"item": str(d.get("vuln_id") or d.get("type") or d.get("message") or "finding"),
-                             "severity": str(d.get("sev") or d.get("severity") or ""),
-                             "param": str(d.get("param", "")),
-                             "inject": str(d.get("inject") or d.get("payload") or "")[:80]})
+        rc, out, err = await _exec(_dalfox_argv(target, rep), {}, timeout)
+        rows = _report_rows("dalfox", rep)
         return rc, out or err, rows
 
 
 async def run_ffuf(target: str, timeout: int):
     with tempfile.TemporaryDirectory() as td:
         rep = Path(td) / "ffuf.json"
-        argv = [str(BIN / "ffuf"), "-u", target.rstrip("/") + "/FUZZ",
-                "-w", str(WORDLIST), "-mc", "200,204,301,302,403",
-                "-t", "40", "-timeout", "8", "-maxtime", "60",
-                "-s", "-o", str(rep), "-of", "json"]
-        rc, out, err = await _exec(argv, {}, timeout)
-        rows = []
-        if rep.exists():
-            try:
-                for r in (json.loads(rep.read_text() or "{}").get("results") or []):
-                    rows.append({"item": str((r.get("input") or {}).get("FUZZ", "")),
-                                 "status": r.get("status"), "length": r.get("length"),
-                                 "words": r.get("words")})
-            except (json.JSONDecodeError, ValueError):
-                pass
+        rc, out, err = await _exec(_ffuf_argv(target, rep), {}, timeout)
+        rows = _report_rows("ffuf", rep)
         return {"tool": "ffuf", "exit": rc, "count": len(rows), "rows": rows[:200],
                 "raw_tail": err[-2000:]}
 
 
-async def _exec(argv, env, timeout: int):
+def _child_env(extra: dict | None) -> dict:
     import os
 
-    child_env = {**os.environ, "HOME": str(Path.home()),
-                 "PATH": f"{BIN}{os.pathsep}{os.environ.get('PATH', '')}"}
-    child_env.update(env or {})
+    env = {**os.environ, "HOME": str(Path.home()),
+           "PATH": f"{BIN}{os.pathsep}{os.environ.get('PATH', '')}"}
+    env.update(extra or {})
+    return env
+
+
+async def _exec(argv, env, timeout: int):
+    child_env = _child_env(env)
+    # stdin MUST be closed: the ProjectDiscovery engines (httpx, naabu, katana,
+    # nuclei) auto-read targets from stdin whenever it is not a TTY. Under the
+    # server stdin is an inherited pipe that never reaches EOF, so without this
+    # they block until the hard timeout and return nothing.
     proc = await asyncio.create_subprocess_exec(*argv,
+                                                stdin=asyncio.subprocess.DEVNULL,
                                                 stdout=asyncio.subprocess.PIPE,
                                                 stderr=asyncio.subprocess.PIPE,
                                                 env=child_env)
@@ -277,7 +326,7 @@ async def execute(tool: str, target: str):
                 "raw_tail": raw[-2000:]}
     if tool == "ffuf":
         return await run_ffuf(target, spec["timeout"])
-    argv = spec["argv"](target, {"python": __import__("sys").executable})
+    argv = spec["argv"](target, {"python": sys.executable})
     rc, out, err = await _exec(argv, {}, spec["timeout"])
     try:
         rows = spec["parse"](out)
@@ -287,3 +336,88 @@ async def execute(tool: str, target: str):
             for r in rows][:200]
     return {"tool": tool, "exit": rc, "count": len(rows), "rows": rows,
             "raw_tail": (out if rc == 0 else err)[-2000:]}
+
+
+async def stream_execute(tool: str, target: str):
+    """Live variant of execute(): yields events as the process speaks.
+
+    {"k":"start","tool","argv","timeout"} then one {"k":"line","v":...} per
+    stdout/stderr line, {"k":"ping"} keepalives while the tool is silent (keeps
+    dev-proxy sockets alive on long scans), and a final {"k":"result","v":...}
+    with the same payload shape as execute().
+    """
+    spec = TOOLS[tool]
+    spec["validate"](target)
+    timeout = spec["timeout"]
+    td: tempfile.TemporaryDirectory | None = None
+    rep: Path | None = None
+    if tool == "dalfox":
+        td = tempfile.TemporaryDirectory()
+        rep = Path(td.name) / "report.jsonl"
+        argv = _dalfox_argv(target, rep)
+    elif tool == "ffuf":
+        td = tempfile.TemporaryDirectory()
+        rep = Path(td.name) / "ffuf.json"
+        argv = _ffuf_argv(target, rep)
+    else:
+        argv = spec["argv"](target, {"python": sys.executable})
+
+    proc = None
+    try:
+        yield {"k": "start", "tool": tool, "argv": argv, "timeout": timeout}
+        # stdin DEVNULL: PD engines block forever reading targets from an
+        # inherited pipe (see _exec). stderr merged so progress is visible live.
+        proc = await asyncio.create_subprocess_exec(*argv,
+                                                    stdin=asyncio.subprocess.DEVNULL,
+                                                    stdout=asyncio.subprocess.PIPE,
+                                                    stderr=asyncio.subprocess.STDOUT,
+                                                    env=_child_env({}))
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        collected: list[str] = []
+        timed_out = False
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                timed_out = True
+                break
+            try:
+                raw = await asyncio.wait_for(proc.stdout.readline(),
+                                             timeout=min(10.0, remaining))
+            except asyncio.TimeoutError:
+                yield {"k": "ping"}
+                continue
+            if not raw:
+                break
+            ln = ANSI.sub("", raw.decode(errors="replace")).rstrip("\r\n")
+            collected.append(ln + "\n")
+            yield {"k": "line", "v": ln}
+        if timed_out:
+            proc.kill()
+            tail = f"killed after {timeout}s timeout"
+            collected.append(tail + "\n")
+            yield {"k": "line", "v": tail}
+        try:
+            rc = await asyncio.wait_for(proc.wait(), timeout=10)
+        except asyncio.TimeoutError:
+            proc.kill()
+            rc = -1
+        if timed_out:
+            rc = -1
+        out = "".join(collected)
+        if rep is not None:
+            rows = _report_rows(tool, rep)
+        else:
+            try:
+                rows = spec["parse"](out)
+            except json.JSONDecodeError:
+                rows = _lines(out)
+        rows = [{"item": str(r.get("item", r)) if isinstance(r, dict) else str(r)} | r
+                for r in rows][:200]
+        yield {"k": "result", "v": {"tool": tool, "exit": rc, "count": len(rows),
+                                    "rows": rows, "raw_tail": out[-2000:]}}
+    finally:
+        if proc is not None and proc.returncode is None:
+            proc.kill()
+        if td is not None:
+            td.cleanup()

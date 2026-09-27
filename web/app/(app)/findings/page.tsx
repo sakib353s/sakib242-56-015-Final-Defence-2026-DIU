@@ -7,7 +7,7 @@ import { fmtTs, trunc } from "@/lib/format";
 import { useStepUp } from "@/components/stepup";
 import { useToast } from "@/components/toast";
 import { Chip, EmptyRows, ErrBanner, LoaderRows, Modal, Panel } from "@/components/ui";
-import type { AssessmentFinding, BrainDecision, Evidence } from "@/lib/types";
+import type { AssessmentFinding, FindingQueueRow } from "@/lib/types";
 
 type Lifecycle = AssessmentFinding["lifecycle"];
 
@@ -58,7 +58,7 @@ export default function FindingsPage() {
 
   const queue = useQuery({
     queryKey: ["findings", "queue", minSev],
-    queryFn: () => get<{ queue: AssessmentFinding[] }>(`/findings/queue?min_severity=${minSev}&limit=200`),
+    queryFn: () => get<{ queue: FindingQueueRow[] }>(`/findings/queue?min_severity=${minSev}&limit=200`),
     refetchInterval: (q) => ((q.state.data?.queue ?? []).length ? 30000 : false),
   });
 
@@ -111,7 +111,7 @@ export default function FindingsPage() {
     <>
       <div className="span-12">
         <Panel title="Finding Engine · open queue" actions={
-          <select className="text" value={minSev} onChange={(e) => setMinSev(e.target.value)} style={{ width: 140 }}>
+          <select className="text" value={minSev} onChange={(e) => setMinSev(e.target.value)} style={{ width: 140 }} aria-label="Minimum severity filter">
             {["critical", "high", "medium", "low", "informational"].map((s) => (
               <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}+</option>
             ))}

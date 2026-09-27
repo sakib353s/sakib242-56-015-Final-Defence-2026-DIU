@@ -1,6 +1,5 @@
 """SOC Center API — defensive, role-gated (no warrant). FR-S01…S06."""
 
-import asyncio
 
 from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, Field
@@ -132,6 +131,16 @@ async def honeypot(request: Request, p: Principal = Depends(require_super)):
     require_totp_stepup(request, p)
     chain.append(p.user_id, "soc.honeypot.deploy_request", "honeypot", {"note": FORFEIT_HONEYPOT_NOTE})
     return {"status": "AWAITING_SEGMENT_AUTHORIZATION", "policy_note": FORFEIT_HONEYPOT_NOTE}
+
+
+@router.get("/mitre-profile/{tid}")
+async def mitre_profile(tid: str, p: Principal = Depends(require_analyst)):
+    """In-app MITRE technique view: official metadata (parsed live from
+    attack.mitre.org, cached) + this system's own observed alerts as a graph."""
+    from app.modules.soc import mitre_profile as mp
+    if not mp.TECH_RE.match(tid.upper()):
+        raise CWBError("technique id must look like T1070 or T1070.001", status=422)
+    return await mp.profile(tid)
 
 
 @router.get("/mitre/{alert_id}")

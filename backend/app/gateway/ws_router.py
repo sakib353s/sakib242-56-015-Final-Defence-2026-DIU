@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from starlette.websockets import WebSocketState
 
 from app.core.config import get_settings
 from app.gateway.boot_router import handle_boot_ws

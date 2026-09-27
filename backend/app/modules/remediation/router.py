@@ -1,7 +1,7 @@
 """Auto-Remediation API — warrant + consent dual-gated. FR-R01…R04."""
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, field_validator
 
 from app.core.errors import NotFound
 from app.core.scopes import is_target_like
@@ -47,9 +47,9 @@ async def list_findings(limit: int = 200, p: Principal = Depends(require_super))
 
 @router.post("/jobs")
 async def create_job(request: Request, body: JobBody, p: Principal = Depends(require_super)):
-    warrant_gate(request, p, body.warrant_id, "remediation", body.host)
+    w = warrant_gate(request, p, body.warrant_id, "remediation", body.host)
     require_totp_stepup(request, p)
-    return saga.generate_job(body.finding_id, body.host, body.warrant_id, p.user_id, body.asset_id)
+    return saga.generate_job(body.finding_id, body.host, w["id"], p.user_id, body.asset_id)
 
 
 @router.get("/jobs/{job_id}/diff")

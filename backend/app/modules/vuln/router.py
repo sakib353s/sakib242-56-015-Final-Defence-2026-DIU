@@ -1,6 +1,5 @@
 """Vuln Scanner API — warrant-gated."""
 
-import asyncio
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from pydantic import BaseModel, Field, field_validator
@@ -39,12 +38,12 @@ class ScanBody(BaseModel):
 @router.post("/scan")
 async def scan(request: Request, body: ScanBody, bg: BackgroundTasks,
                p: Principal = Depends(require_analyst)):
-    warrant_gate(request, p, body.warrant_id, "vuln_scan", body.target)
+    w = warrant_gate(request, p, body.warrant_id, "vuln_scan", body.target)
     require_totp_stepup(request, p)
     sid = new_id()
     with sql.get_db() as c:
         c.execute("INSERT INTO vuln_scans (id, warrant_id, target, created_by, bound_session, created_at)"
-                  " VALUES (?,?,?,?,?,?)", (sid, body.warrant_id, body.target, p.user_id, p.sid, now_iso()))
+                  " VALUES (?,?,?,?,?,?)", (sid, w["id"], body.target, p.user_id, p.sid, now_iso()))
     chain.append(p.user_id, "vuln.scan.create", sid, {"target": body.target})
     bg.add_task(service.run_scan, sid, p.user_id)
     return {"scan_id": sid, "status": "PENDING"}

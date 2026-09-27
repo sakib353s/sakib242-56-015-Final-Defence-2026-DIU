@@ -22,7 +22,7 @@ mobile/    Expo SDK 51 · offline outbox (exactly-once sync) · FCM · biometric
 cd backend
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python app/scripts/seed.py        # prints one-time admin creds + TOTP (nothing hardcoded)
-.venv/bin/uvicorn app.main:app --port 8471  # cwb-core
+.venv/bin/uvicorn app.main:app --port 8471 --timeout-keep-alive 75  # cwb-core (keep-alive must outlast the Next dev proxy's pool)
 
 # 2. web
 cd ../web && npm install && npm run dev     # http://localhost:3000/boot

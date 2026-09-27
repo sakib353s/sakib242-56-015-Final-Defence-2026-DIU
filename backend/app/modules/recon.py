@@ -246,5 +246,9 @@ def resolve(target: str) -> str | None:
 
 async def fingerprint_many(ip: str, ports: list[int], limit: int = 64) -> list[dict]:
     tasks = [asyncio.to_thread(grab_banner, ip, p) for p in ports[:limit]]
-    rows = await asyncio.gather(*tasks)
-    return [{"portid": p, **r} for p, r in zip(ports[:limit], rows)]
+    # return_exceptions: one banner thread blowing up must not cancel (and thus
+    # lose) the other ports' fingerprints — the whole vuln/pentest session
+    # would otherwise be marked FAILED because of a single odd socket.
+    rows = await asyncio.gather(*tasks, return_exceptions=True)
+    return [{"portid": p, **(r if isinstance(r, dict) else {})}
+            for p, r in zip(ports[:limit], rows)]

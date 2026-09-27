@@ -1,10 +1,14 @@
 """RFC 7807 problem+json errors for CYBERWATCH-BD."""
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+log = logging.getLogger("cwb.errors")
 
 
 class CWBError(Exception):
@@ -75,22 +79,35 @@ class RefusedOutOfWork(CWBError):
     status = 422
 
 
+def _rid(request: Request) -> str:
+    return getattr(request.state, "request_id", "") or ""
+
+
+def _problem_response(prob: CWBError, status: int, request: Request) -> JSONResponse:
+    """Always echo the request id in both the body and the header, so a client that
+    only kept the HTTP response can still quote a traceable reference."""
+    rid = _rid(request)
+    resp = JSONResponse(prob.problem(), status_code=status,
+                        media_type="application/problem+json")
+    if rid:
+        resp.headers["X-Request-ID"] = rid
+    return resp
+
+
 def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(CWBError)
     async def _cwb(request: Request, exc: CWBError):
-        exc.request_id = getattr(request.state, "request_id", "")
-        return JSONResponse(exc.problem(), status_code=exc.status,
-                            media_type="application/problem+json")
+        exc.request_id = _rid(request)
+        return _problem_response(exc, exc.status, request)
 
     @app.exception_handler(StarletteHTTPException)
     async def _http(request: Request, exc: StarletteHTTPException):
-        prob = CWBError(str(exc.detail))
+        prob = CWBError(str(exc.detail), request_id=_rid(request))
         prob.__class__ = type("HTTPAdapted", (CWBError,),
                              {"type_uri": "https://cwb.bd/err/http",
                               "title": exc.detail if isinstance(exc.detail, str) else "HTTP error",
                               "status": exc.status_code})
-        return JSONResponse(prob.problem(), status_code=exc.status_code,
-                            media_type="application/problem+json")
+        return _problem_response(prob, exc.status_code, request)
 
     @app.exception_handler(RequestValidationError)
     async def _validation(request: Request, exc: RequestValidationError):
@@ -98,13 +115,29 @@ def install_error_handlers(app: FastAPI) -> None:
         prob.type_uri = "https://cwb.bd/err/validation"
         prob.title = "Request validation failed"
         prob.status = 422
-        prob.request_id = getattr(request.state, "request_id", "")
-        return JSONResponse(prob.problem(), status_code=422,
-                            media_type="application/problem+json")
+        prob.request_id = _rid(request)
+        return _problem_response(prob, 422, request)
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception):
-        prob = CWBError("Unhandled internal error (details suppressed)")
-        prob.request_id = getattr(request.state, "request_id", "")
-        return JSONResponse(prob.problem(), status_code=500,
-                            media_type="application/problem+json")
+        rid = _rid(request)
+        # Never swallow the trace: the client keeps a suppressed detail, but the
+        # operator MUST be able to correlate request_id -> stack trace.
+        log.exception("unhandled %s on %s %s (request_id=%s)",
+                      type(exc).__name__, request.method, request.url.path, rid or "-")
+        ref = ""
+        try:
+            from app.audit import chain
+            ref = chain.safe_append(
+                "system:error", "system.error.unhandled", request.url.path,
+                {"request_id": rid, "error": type(exc).__name__,
+                 "message": str(exc)[:200]},
+            )
+        except Exception:  # audit must never mask the primary failure
+            ref = ""
+        trace = f"request_id={rid}" if rid else "request_id unavailable"
+        if ref and ref != "AUDIT-UNAVAILABLE":
+            trace += f" · audit_ref={ref}"
+        prob = CWBError(f"Unhandled internal error (details suppressed) · {trace}",
+                        audit_ref=ref, request_id=rid)
+        return _problem_response(prob, 500, request)

@@ -5,8 +5,6 @@ execution. Responses carry real persisted state only; no simulated data.
 """
 from __future__ import annotations
 
-import asyncio
-import json
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from pydantic import BaseModel, Field, field_validator
@@ -48,11 +46,11 @@ async def create(request: Request, body: CreateBody, p: Principal = Depends(requ
     from app.modules.assessment.adapters import canonicalize
 
     canonical, ctype = canonicalize(body.target)
-    warrant_gate(request, p, body.warrant_id, "pentest", canonical)
+    w = warrant_gate(request, p, body.warrant_id, "pentest", canonical)
     require_totp_stepup(request, p)
     assessment = service.create_assessment(
         body.target,
-        body.warrant_id,
+        w["id"],
         p.user_id,
         p.sid,
         profile=body.profile,
@@ -76,6 +74,14 @@ async def start(request: Request, aid: str, bg: BackgroundTasks, p: Principal = 
     return {"ok": True, "status": "DISPATCHED", "assessment_id": aid}
 
 
+@router.get("/findings/{fid}")
+async def finding_detail(fid: str, p: Principal = Depends(require_analyst)):
+    detail = service.get_finding_detail(fid)
+    if not detail or not detail["finding"]:
+        raise CWBError("Finding not found", status=404)
+    return detail
+
+
 @router.get("/{aid}")
 async def get(aid: str, p: Principal = Depends(require_analyst)):
     a = sql.one("SELECT * FROM assessments WHERE id=?", aid)
@@ -97,19 +103,11 @@ async def get(aid: str, p: Principal = Depends(require_analyst)):
 @router.get("/{aid}/observations")
 async def observations(aid: str, offset: int = 0, limit: int = 100, p: Principal = Depends(require_analyst)):
     rows = sql.all_(
-        "SELECT * FROM observations WHERE assessment_id=? ORDER BY created_at OFFSET ? LIMIT ?",
-        aid, offset, min(limit, 500),
+        "SELECT * FROM observations WHERE assessment_id=? ORDER BY collected_at LIMIT ? OFFSET ?",
+        aid, min(limit, 500), offset,
     )
     total = sql.one("SELECT COUNT(*) AS cnt FROM observations WHERE assessment_id=?", aid)["cnt"]
     return {"observations": rows, "total": total, "offset": offset, "limit": limit}
-
-
-@router.get("/findings/{fid}")
-async def finding_detail(fid: str, p: Principal = Depends(require_analyst)):
-    detail = service.get_finding_detail(fid)
-    if not detail or not detail["finding"]:
-        raise CWBError("Finding not found", status=404)
-    return detail
 
 
 @router.get("")
@@ -126,7 +124,7 @@ async def cancel(request: Request, aid: str, p: Principal = Depends(require_anal
     if a["status"] in ("COMPLETED", "FAILED", "CANCELLED"):
         return {"ok": False, "reason": f"already {a['status']}"}
     with sql.get_db() as c:
-        c.execute("UPDATE assessments SET status='CANCELLED', updated_at=? WHERE id=?",
+        c.execute("UPDATE assessments SET status='CANCELLED', finished_at=? WHERE id=?",
                   (now_iso(), aid))
     chain.append(p.user_id, "assessment.cancelled", aid, {})
     return {"ok": True, "status": "CANCELLED"}

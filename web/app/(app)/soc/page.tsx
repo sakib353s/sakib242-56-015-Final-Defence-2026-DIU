@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { get, post, qs } from "@/lib/api";
 import { getRole } from "@/lib/auth";
 import { hasRole } from "@/lib/rbac";
-import { clock, elapsedSince, fmtTs, humanAction, humanStatus, statusTone, trunc } from "@/lib/format";
+import { clock, elapsedSince, fmtTs, humanAction, humanStatus, sevTone, trunc } from "@/lib/format";
 import { useStepUp } from "@/components/stepup";
 import { useToast } from "@/components/toast";
 import { DonutStat, RankList, SEV_COLORS } from "@/components/charts";
@@ -179,7 +180,7 @@ export default function SocPage() {
                   <tr key={a.id} className="sev-strip" style={{ "--sev": sevVar(a.severity) } as React.CSSProperties}>
                     <td className="cell-id" title={fmtTs(a.ts)}>{fmtTs(a.ts).slice(11)}</td>
                     <td>
-                      <Chip tone={statusTone(a.severity)} label={humanStatus(a.severity)} />
+                      <Chip tone={sevTone(a.severity)} label={humanStatus(a.severity)} />
                     </td>
                     <td style={{ maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={a.signature}>
                       {a.signature}
@@ -190,9 +191,11 @@ export default function SocPage() {
                     </td>
                     <td className="cell-id">
                       {a.mitre ? (
-                        <a href={`https://attack.mitre.org/techniques/${a.mitre.replace(/\./g, "/")}/`} target="_blank" rel="noreferrer">
-                          {a.mitre}
-                        </a>
+                        <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                          <Link href={`/soc/mitre/${a.mitre}`} title="Open the technique war-room inside CyberWatch">{a.mitre}</Link>
+                          <a href={`https://attack.mitre.org/techniques/${a.mitre.replace(/\./g, "/")}/`} target="_blank" rel="noreferrer"
+                            title="Open official MITRE page in a new tab" style={{ opacity: 0.55 }}>↗</a>
+                        </span>
                       ) : (
                         "—"
                       )}

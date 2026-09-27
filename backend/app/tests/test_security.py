@@ -1,16 +1,11 @@
 """P-08 attack matrix: auth bypass, JWT forgery, TOTP replay, HMAC forgery, scope
 drift, IDOR, path traversal, rate-limit, WS origin spoofing, audit tamper detection."""
-import hashlib
-import hmac
-import time
 
 import jwt
 import pyotp
-import pytest
 
 from app.audit import chain
 from app.core.config import get_settings
-from app.core.security import canonical_json
 from app.db import sqlite as sql
 
 S = get_settings()

@@ -5,7 +5,6 @@ Retest dispatches through the registered adapters and produces an honest outcome
 without trusting exit codes alone."""
 from __future__ import annotations
 
-import asyncio
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from pydantic import BaseModel, Field

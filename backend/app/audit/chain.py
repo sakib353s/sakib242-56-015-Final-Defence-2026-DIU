@@ -36,16 +36,22 @@ def append(actor: str, action: str, object_ref: str, payload: dict | None = None
     return rid
 
 
+_fanout_tasks: set = set()  # strong refs: the loop keeps tasks only weakly
+
+
 def _fanout(actor: str, action: str, object_ref: str, ts: int) -> None:
     """Best-effort live mirror of the audit stream on /ws/alerts; never masks auditing."""
     try:
         import asyncio
 
         from app.gateway.wsmanager import manager
-        asyncio.get_running_loop().create_task(manager.publish(
+
+        task = asyncio.get_running_loop().create_task(manager.publish(
             "alerts", "audit.event",
             {"actor": actor, "action": action, "object_ref": str(object_ref)[:80], "ts_ms": ts},
         ))
+        _fanout_tasks.add(task)
+        task.add_done_callback(_fanout_tasks.discard)
     except Exception:
         pass
 

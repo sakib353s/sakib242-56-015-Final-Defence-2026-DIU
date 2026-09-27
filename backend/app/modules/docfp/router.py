@@ -1,6 +1,5 @@
 """Doc Fingerprint API."""
 
-from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Request, UploadFile
 from pydantic import BaseModel, Field

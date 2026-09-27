@@ -1,7 +1,6 @@
 """Auth lifecycle: login (argon2 + lockout), TOTP verify, rotating refresh, logout.
 TOTP is step-up for SUPER_ADMIN/ANALYST; login itself consumes password + current TOTP."""
 
-import time
 import uuid as uuidlib
 from datetime import datetime, timedelta, timezone
 
@@ -11,13 +10,12 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.audit import chain
 from app.core.config import get_settings
-from app.core.errors import Conflict, Forbidden, Unauthorized
-from app.core.ids import new_id
-from app.core.security import (dec_field, enc_field, hash_password, make_access,
-                               totp_now, totp_provisioning_uri, totp_valid, verify_password)
-from app.db.repositories import Ledger, Sessions, Users
+from app.core.errors import Forbidden, Unauthorized
+from app.core.security import (dec_field, enc_field, make_access,
+                               totp_provisioning_uri, totp_valid, verify_password)
+from app.db.repositories import Sessions, Users
 from app.db import sqlite as sql
-from app.gateway.deps import Principal, authenticate, require_totp_stepup
+from app.gateway.deps import Principal, authenticate
 from app.gateway.middleware import limiter
 
 S = get_settings()

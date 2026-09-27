@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     replay_window_s: int = 300
     # TOTP step-up: auto = enforce in production, skip prompt in lab; on/off force it.
     totp_enforce: str = "auto"
+    # Written-authorization gate (warrant_gate + tools console):
+    # auto = enforce in production, skip (audited) in lab; on/off force it.
+    warrant_enforce: str = "auto"
     # external intel
     hibp_api_key: str = ""
     shodan_api_key: str = ""
@@ -91,6 +94,12 @@ class Settings(BaseSettings):
     def totp_stepup_required(self) -> bool:
         # Production can never relax the gate; only lab honors auto/off.
         mode = self.totp_enforce.strip().lower()
+        return self.is_production or mode == "on"
+
+    @property
+    def warrant_required(self) -> bool:
+        # Production can never relax the gate; only lab honors auto/off.
+        mode = self.warrant_enforce.strip().lower()
         return self.is_production or mode == "on"
 
     @property

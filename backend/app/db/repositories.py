@@ -1,7 +1,6 @@
 """Repository pattern over SQLite — typed accessors for core tables."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
 
 from app.core.ids import new_id
 from app.core.security import hash_password, now_iso

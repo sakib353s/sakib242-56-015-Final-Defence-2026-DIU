@@ -16,7 +16,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 from app.core.config import get_settings
-from app.core.errors import TooFast
 from app.core.ids import new_id
 from app.core.security import decode_access
 
@@ -50,6 +49,16 @@ class GlobalRateLimit(BaseHTTPMiddleware):
             )
         hits.append(now)
         self._hits[ip] = hits
+        # keys accumulate one-per-distinct-IP for the process lifetime otherwise:
+        # periodic sweep of IPs idle for >2 windows, hard-trim if still absurd
+        self._swept = getattr(self, "_swept", 0) + 1
+        if self._swept > 8192 or len(self._hits) > 65536:
+            self._swept = 0
+            for k in [k for k, v in self._hits.items() if not v or now - v[-1] > 2 * self.window]:
+                self._hits.pop(k, None)
+            if len(self._hits) > 65536:
+                for k in list(self._hits)[: len(self._hits) - 65536]:
+                    self._hits.pop(k, None)
         return await call_next(request)
 
 # Exact paths that may pass unauthenticated. /auth/refresh authenticates with the
@@ -78,7 +87,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+        # "/" is the human-readable landing page: inline styles only, script-less.
+        if request.url.path == "/":
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
+        else:
+            response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
         if request.url.scheme == "https":
             response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
         return response
@@ -122,10 +136,12 @@ class AuthNMiddleware(BaseHTTPMiddleware):
 def install(app: FastAPI) -> None:
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-    # NOTE Starlette applies middleware bottom-up; add in REVERSE of the spec chain
-    # so the runtime order is CORS → RateLimit → AuthN → RequestID → SecurityHeaders.
+    # NOTE Starlette applies middleware bottom-up; add in REVERSE of the desired
+    # runtime order. RequestID is added LAST so it runs FIRST: every response —
+    # including the 401/429 short-circuits produced by AuthN and RateLimit — must
+    # carry a request id, otherwise failures are untraceable.
+    # Runtime order: RequestID → CORS → RateLimit → AuthN → SecurityHeaders.
     app.add_middleware(SecurityHeadersMiddleware)
-    app.add_middleware(RequestIdMiddleware)
     app.add_middleware(AuthNMiddleware)
     app.add_middleware(GlobalRateLimit, limit=100, window_s=60)
     app.add_middleware(
@@ -136,3 +152,4 @@ def install(app: FastAPI) -> None:
         allow_headers=["Authorization", "Content-Type", "X-TOTP", "X-Request-ID", "X-Date",
                        "X-Client", "Idempotency-Key"],
     )
+    app.add_middleware(RequestIdMiddleware)
